@@ -1,0 +1,21 @@
+src := @module_root@
+obj-m += fgdsfs.o
+
+KVER ?= $(shell uname -r)
+ccflags-y += @module_ccflags@
+
+fgdsfs-objs := fgds-mem.o nvfs-pci.o nvfs-p2p.o fgds.o
+KERNEL_SRC := /lib/modules/$(KVER)/build
+
+all: fgds
+
+fgds: configure
+	$(MAKE) -C $(KERNEL_SRC) M=@module_output@ modules
+configure:
+	@ @module_root@/configure $(KVER) @module_root@
+insmod:
+	sudo insmod fgdsfs.ko
+rmmod:
+	sudo rmmod fgdsfs
+clean:
+	rm -fr *.o *.ko *.mod* .*.cmd .*.d
