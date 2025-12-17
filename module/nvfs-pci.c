@@ -256,6 +256,7 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
                                          int max_devices,
                                          unsigned int class) {
 	struct pci_dev *pdev = NULL;
+	uint64_t temp_info[MAX_GPU_DEVS];
 
 	while ((pdev = pci_get_class(class, pdev)) != NULL) {
 		uint64_t pdevinfo;
@@ -273,7 +274,7 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
 		pdevinfo = nvfs_pdevinfo(pdev);
 
 		if (PCI_DEV_GPU(class >> 8, pdev->vendor)) {
-			gpu_info_table[DEV_NUM] = pdevinfo;
+			temp_info[DEV_NUM] = pdevinfo;
 			DEV_NUM++;
 		} 
 
@@ -282,6 +283,10 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
 			PCI_SLOT(pdev->devfn),
 			PCI_FUNC(pdev->devfn));
 	}
+
+    for (int i = 0; i < DEV_NUM; i++) {
+        gpu_info_table[i] = temp_info[DEV_NUM - 1 - i];
+    }
 	
 	return;
 

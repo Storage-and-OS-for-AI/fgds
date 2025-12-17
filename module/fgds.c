@@ -86,8 +86,8 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 	printk("npu_devm_memremap 1\n");
 	pgmap = &phx_dev->p2p_pgmap->pgmap;
 
-	pgmap->range.start = phx_dev->paddr;
-	pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
+	pgmap->range.start = phx_dev->paddr + 0x200000;
+	pgmap->range.end = phx_dev->paddr + phx_dev->size -1 - 0x200000;
 	printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
 			pgmap->range.end);
 	pgmap->nr_range = 1;
@@ -135,6 +135,9 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 		printk("npu%u: bus is %x, size is %llu, paddr is %llx\n", i,
 			dev_ctrl->phx_dev[i].dev->bus->number, dev_ctrl->phx_dev[i].size,
 			dev_ctrl->phx_dev[i].paddr);
+		if (dev_ctrl->phx_dev[i].dev->bus->number != 0x83) {//TODOwh
+			continue;
+		}
 		ret = fgds_devm_memremap(&dev_ctrl->phx_dev[i]);
 		if (ret)
 			return ret;
@@ -207,20 +210,20 @@ void fgds_cdev_del(struct cdev *cdev, struct device *cdev_device,
 		devm_kfree(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
 	}
 	dev->dev = NULL;
-	ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
+	//ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
 }
 
 int fgds_cdev_add(struct cdev *cdev, struct device *cdev_device,
                    const struct file_operations *fops, struct module *owner,
                    struct fgds_dev *dev) {
 	int ret;
-	ret = ida_simple_get(&fgds_chr_minor_ida, 0, MAX_DEV_NUM, GFP_KERNEL);
-	if (ret < 0)
-		return ret;
-	dev->idx = ret;
+	//ret = ida_simple_get(&fgds_chr_minor_ida, 0, MAX_DEV_NUM, GFP_KERNEL);
+	//if (ret < 0)
+	//	return ret;
+	//dev->idx = ret;
 	ret = dev_set_name(cdev_device, "fgds_dev%d", dev->idx);
 	if (ret) {
-		ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
+		//ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
 		return ret;
 	}
 	cdev_device->devt = MKDEV(MAJOR(fgds_chr_devt), dev->idx);
@@ -229,8 +232,8 @@ int fgds_cdev_add(struct cdev *cdev, struct device *cdev_device,
 	cdev_init(cdev, fops);
 	cdev->owner = owner;
 	ret = cdev_device_add(cdev, cdev_device);
-	if (ret)
-		ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
+	//if (ret)
+	//	ida_simple_remove(&phxfs_chr_minor_ida, dev->idx);
 	return ret;
 }
 
@@ -251,6 +254,12 @@ int fgds_cdev_init(struct fgds_ctrl *ctrl) {
 		goto unregister_generic_fgds;
 	}
 	for (i = 0; i < ctrl->dev_num; i++) {
+		//TODOwh
+		//dev_id = ida_simple_get(&fgds_chr_minor_ida, 0, MAX_DEV_NUM, GFP_KERNEL);
+		if (ctrl->phx_dev[i].dev->bus->number != 0x83) {
+			printk("npu%u: bus is %x, skip\n", i, ctrl->phx_dev[i].dev->bus->number);
+			continue;
+		}
 		ret = fgds_cdev_add(&ctrl->phx_dev[i].cdev, &ctrl->phx_dev[i].device,
 							&fgds_chr_fops, THIS_MODULE, &ctrl->phx_dev[i]);
 		if (ret) {
@@ -310,7 +319,12 @@ static int __init fgds_init(void) {
 
 static void __exit fgds_exit(void) {
 	int i;
-	for (i = 0; i < ctrl.dev_num; i++) {
+	for (i = 0; i < ctrl.dev_num; i++) { //TODOwh
+		if (ctrl.phx_dev[i].dev->bus->number != 0x83) {
+			printk("npu%u: bus is %x, skip\n", i, ctrl.phx_dev[i].dev->bus->number);
+			ctrl.phx_dev[i].dev = NULL;
+			continue;
+		}
 		fgds_cdev_del(&ctrl.phx_dev[i].cdev, &ctrl.phx_dev[i].device, &ctrl.phx_dev[i]);
 	}
 
