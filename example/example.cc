@@ -5,8 +5,8 @@
 #include <fcntl.h>
 #include "phoenix.h"
 
-const char *file_path = "/mnt/phxfs/test.data";
-static int device_id = 0;
+const char *file_path = "/data/phxfs/test.data";
+static int device_id = 4;
 static size_t io_size = 64 * (1 << 10); // 64KB
 
 int main() {
@@ -17,35 +17,35 @@ int main() {
 
     file_fd = open(file_path, O_CREAT | O_RDWR | O_DIRECT, 0644);
 
-
+    printf("phxfs init start\n");
     ret = phxfs_open(device_id);
-
+    printf("phxfs init ret: %d\n", ret);
     if (ret != 0) {
         printf("phxfs init failed: %d\n", ret);
         return 1;
     }
-
+    cudaSetDevice(device_id);
     cudaMalloc(&gpu_buffer, io_size);
     cudaMemset(gpu_buffer, 0x00, io_size);
     cudaStreamSynchronize(0);
-
+    printf("phxfs regmem start\n");
     // target_addr for register buffer less than 1GB
     ret = phxfs_regmem(device_id, gpu_buffer, io_size, &target_addr);
-
+    printf("phxfs regmem ret: %d\n", ret);
     if (ret) {
         printf("phxfs regmem failed: %d\n", ret);
         return 1;
     }
-
+    printf("phxfs regmem target_addr: %p\n", target_addr);
     result = pread(file_fd, target_addr, io_size, 0);
-
+    printf("phxfs pread ret: %ld\n", result);
     if (result < 0) {
         perror("Read file error");
         return 1;
     }
-
+    printf("phxfs pread done\n");
     ret = phxfs_deregmem(device_id, gpu_buffer, io_size);
-
+    printf("phxfs unregmem ret: %d\n", ret);
     if (ret) {
         printf("phxfs unregmem failed: %d\n", ret);
         return 1;
