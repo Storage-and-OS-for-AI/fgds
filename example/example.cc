@@ -5,8 +5,8 @@
 #include <fcntl.h>
 #include "fgds.h"
 
-const char *file_path = "/mnt/fgds/test.data";
-static int device_id = 0;
+const char *file_path = "/data3/10GB_ddrand";
+static int device_id = 4;
 static size_t io_size = 64 * (1 << 10); // 64KB
 
 int main() {
