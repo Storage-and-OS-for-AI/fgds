@@ -9,8 +9,8 @@
 #include <ctime>
 
 const char *file_path = "/data3/10GB_ddrand";
+size_t  data_size = 10ULL * 1024 * 1024 * 1024; // *GB
 static int device_id = 4;
-static size_t io_size = 1 * (1 << 20); // 
 static size_t buff_size = 10ULL * (1 << 30); // 10GB
 
 #define check_cudaruntimecall(fn) \
@@ -74,14 +74,67 @@ void add_timespec(struct timespec& total, const struct timespec& addend) {
     }
 }
 
-int test_posix_loop() {
+int test_only_read_fd_loop(size_t iosize_mb) {
+    size_t io_size = iosize_mb * (1 << 20);
+    int file_fd, ret;
+    struct timespec prog_start, prog_end;
+    void *data_buffer = NULL;
+
+    file_fd = open(file_path,  O_CREAT | O_RDWR | O_DIRECT, 0644);
+    if (file_fd < 0) {
+        perror("Open file error");
+        return -1;
+    }
+
+    ret = posix_memalign(&data_buffer, 4096, buff_size);
+    if (ret != 0) {
+        data_buffer = NULL;
+        printf("buffer alloc error");
+		return -1;
+    }
+
+    size_t read_bytes = 0;
+    ssize_t result;
+	struct timespec total_read_fd_elapsed {}; 
+	int read_count = 0;
+
+    clock_gettime(CLOCK_MONOTONIC, &prog_start);
+    while(read_bytes < data_size) {
+        result = pread(file_fd, point_offset(data_buffer, read_bytes), io_size, read_bytes);
+        if (result == 0) {
+            printf("read file end\n");
+            break;
+        }
+        if (result != io_size) {
+            printf("read_thread error\n");
+            std::cerr << "read_thread error, result is " << result << ", size is " << io_size << std::endl;
+            return NULL;           
+        }
+
+        read_bytes += result;
+		read_count++;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &prog_end);
+
+    struct timespec total_elapsed = get_elapsed_timespec(prog_start, prog_end);
+	double total_cost = timespec_to_double(total_elapsed);
+    printf("io_size:%zu bytes(%zuMB), buffer_size:%zu bytes(%zuGB), posix read %zu bytes(%zuGB), read_count:%d,total cost:%fs, total read bw:%fGB/s \n",
+		io_size, io_size/1024/1024, buff_size, buff_size/1024/1024/1024, data_size, data_size/1024/1024/1024, 
+		read_count, total_cost, cal_bw(data_size, total_elapsed));
+
+	free(data_buffer);
+	close(file_fd);
+	return 0;
+}
+
+int test_posix_loop(size_t iosize_mb) {
+    size_t io_size = iosize_mb * (1 << 20);
     int file_fd, ret;
     struct timespec prog_start, prog_end;
     void *gpu_buffer = NULL;
     void *data_buffer = NULL;
-    size_t  data_size = 10ULL * 1024 * 1024 * 1024; // 10GB
 
-    file_fd = open("/data3/10GB_ddrand",  O_CREAT | O_RDWR | O_DIRECT, 0644);
+    file_fd = open(file_path,  O_CREAT | O_RDWR | O_DIRECT, 0644);
     if (file_fd < 0) {
         perror("Open file error");
         return -1;
@@ -166,7 +219,7 @@ int test_posix_once() {
     void *gpu_buffer = NULL;
     void *data_buffer = NULL;
 
-    file_fd = open("/data3/10GB_ddrand",  O_CREAT | O_RDWR | O_DIRECT, 0644);
+    file_fd = open(file_path,  O_CREAT | O_RDWR | O_DIRECT, 0644);
     if (file_fd < 0) {
         perror("Open file error");
         return -1;
@@ -186,7 +239,7 @@ int test_posix_once() {
 
     ssize_t result;
     struct timespec io_start, io_readfd_end, io_end;
-	io_size = 1UL * 1024 * 1024 * 1024; // 1GB.  一次读如果大于1GB,会报错,读到的实际字节数<要求读到的字节数
+	size_t io_size = 1UL * 1024 * 1024 * 1024; // 1GB.  一次读如果大于1GB,会报错,读到的实际字节数<要求读到的字节数
 
     clock_gettime(CLOCK_MONOTONIC, &io_start);
 	result = pread(file_fd, point_offset(data_buffer, 0), io_size, 0);
@@ -227,6 +280,7 @@ int fgds_demo() {
     int ret;
     int file_fd;
     ssize_t result; 
+    static size_t io_size = 1 * (1 << 20); // 
 
     file_fd = open(file_path, O_CREAT | O_RDWR | O_DIRECT, 0644);
 
@@ -269,7 +323,22 @@ int fgds_demo() {
     close(file_fd);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
 	cudaSetDevice(device_id);
-	fgds_demo();
+    if (argc == 1) {
+       printf("err, Usage:%s <blcoksize>, like ./example 4", argv[0]);
+       return 1;
+    }
+    int iosize_mb = std::atoi(argv[1]);
+    char* type = argv[2];
+    if (type != NULL && (strcmp(type, "posix") == 0)) {
+        // 如果是./example 4 posix,表示blocksize 4MB,测读文件到内存,然后拷贝到显存的性能
+        printf("posix loop:\n");
+        test_posix_loop(iosize_mb);
+    } else {
+        // 如果是./example 4,表示blocksize 4MB,读文件到内存的性能.不涉及从内存拷贝到显存
+        printf("only read fd loop\n");
+        test_only_read_fd_loop(iosize_mb);
+    }
+    return 0;
 }
