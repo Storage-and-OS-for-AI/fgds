@@ -1,23 +1,30 @@
-# Python api for Fgds 
+# Python API for FGDS
 
-This module provide the python api for fgds and add the extra storage backend of fgds for lmcache
+This module provides the Python API for FGDS and adds an extra storage backend for lmcache.
 
 ## Features
-- Use ctypes to wrapper the fgds api from dynamic library of libfgds.so
-- Provide a class for fgds file operations.
+- Use `ctypes` to wrap the FGDS API from the shared library (`libfgds.so`)
+- Provide a class for FGDS file operations
 
 ## Installation
 
 ```bash
-python setup install
+cd python
+python -m pip install .
 ```
 
 ## Usage
 
-1. compile the libfgds.so
-2. deploy the libfgds.so to /usr/lib64/ or any other library path
-3. python -c "import fgds;print(fgds.__file__)"
-4. prepare the fgds environment and run the test/test.py
+1. Build `libfgds.so` (see the repo top-level `README.md` for build steps).
+2. Make sure `libfgds.so` is discoverable by the dynamic linker (for example, install it into `/usr/lib64/`, or set `LD_LIBRARY_PATH` to the directory containing it).
+3. Verify the Python package is importable:
 
-## License
-Apache-2.0 License
+```bash
+python -c "import fgds; print(fgds.__file__)"
+```
+
+4. Prepare the FGDS environment and run:
+
+```bash
+python test/test.py
+```

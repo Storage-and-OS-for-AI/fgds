@@ -2,14 +2,14 @@
 The phoenix has been accepted for [SC'25](https://doi.org/10.1145/3712285.3759862). This documentation explains how to build, configure and use this I/O stack.
 
 ## Directory structure
-```python
+```
 fgds
-|--benchmarks   # artifact evaluation files
-|--example      # example for how to use fgds
-|--libfgds   # user library for fgds
-|--module       # kernel module for fgds
-|--scripts      # test scripts
-|--python       # python api for fgds
+├── benchmarks   # artifact evaluation files
+├── example      # example for how to use fgds
+├── libfgds      # user library for fgds
+├── module       # kernel module for fgds
+├── scripts      # test scripts
+└── python       # python api for fgds
 ```
 
 ## How to Build
@@ -70,11 +70,11 @@ see [python/README.md](./python/README.md)
 We provide some scripts to execute the evaluation procedure.
 
 Note: make sure to update the paths in the scripts.
-### 4.1 Faster Reproduction. 
+#### 4.1 Faster Reproduction. 
 We have integrated all experiment scripts and provided a Python script. 
 Users can run the corresponding experiment by specifying the artifact parameter. This script will also print all the corresponding execution commands.
 Before running this Python script, users need to set the variables `file_path`, `nvmeof_file_path`, and `model_dir` to the paths specific to users’ own environment. 
-All results will be stored in the `fgds/sc25/results` directory
+All results will be stored in the `fgds/sc25/results` directory.
 
 ```shell
 cd fgds/sc25
@@ -82,28 +82,31 @@ cd fgds/sc25
 sudo python run_all_benchmarks.py --artifact all
 ```
 In addition, we also provide individual scripts for each experiment as follows:
-#### 3.2 Breakdown
+#### 4.2 Breakdown
 ```shell
 cd scripts && sudo bash breakdown.sh
 ```
-#### 3.3 I/O Performance
+#### 4.3 I/O Performance
 ```shell
 cd scripts
 # see micro.py for detail
 sudo python micro.py <0|1> <0|1|2> 0
 ```
-#### 3.4 End-to-End Performance
+#### 4.4 End-to-End Performance
 ```shell
 cd build/
 sudo bin/end-to-end <file_path> <io_size> <mode>
 ```
-#### 3.5 KVCache Loading
+#### 4.5 KVCache Loading
 ```shell
 cd scripts
 sudo bash kvcache.sh
 ```
-#### 3.6 Model Loading
+#### 4.6 Model Loading
 ```shell
 cd scripts
 sudo python load_safetensors.py
 ```
+
+## Copyright&LICENSE
+Copyright (c) KylinSoft Co., Ltd. 2026-2027.All rights reserved.
