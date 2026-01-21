@@ -78,8 +78,8 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 	int ret = 1;
 	struct dev_pagemap *pgmap;
 
-	phx_dev->p2p_pgmap = devm_kzalloc(&phx_dev->dev->dev,
-									sizeof(struct pci_p2pdma_pagemap), GFP_KERNEL);
+	phx_dev->p2p_pgmap = devm_kzalloc(&phx_dev->dev->dev,  //分配的是内核内存，这里指针的意思是关联了这个设备，设备卸载时内存会自动释放
+									sizeof(struct pci_p2pdma_pagemap), GFP_KERNEL);  //分配的是内核虚拟内存
 	if (phx_dev->p2p_pgmap == NULL)
 		return -ENOMEM;
 
@@ -93,7 +93,7 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 	pgmap->nr_range = 1;
 	pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
 
-	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
+	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);  // 为这个设备的物理地址映射虚拟地址
 
 	printk("npu numa is %d\n", phx_dev->dev->dev.numa_node);
 
@@ -110,12 +110,22 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 	return ret;
 }
 
+/**
+ * @brief Initialize the fgds-fs control structure and remap the GPU device's BAR memory to the kernel space.
+ * @param dev_ctrl: Pointer to the fgds-fs control structure.
+ * @param dev_num: Number of GPU devices.
+ * @return On success, 0 is returned.
+ *         On failure, a negative error code is returned.
+ */
 static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 	int i, j, ret;
 	u64 size;
 	u16 bus, fn;
+
+	// get the PCIe BAR information of each GPU device
 	dev_ctrl->dev_num = dev_num;
 	for (i = 0; i < dev_ctrl->dev_num; i++) {
+        // get the PCIe BAR information of each GPU device
 		bus = (gpu_info_table[i] >> 8) & 0xFF;
 		fn = gpu_info_table[i] & 0xFF;
 		dev_ctrl->phx_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
@@ -126,6 +136,7 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 		for (j = 0; j < PCI_NUM_RESOURCES; j++) {
 			size = pci_resource_len(dev_ctrl->phx_dev[i].dev, j);
 			if (size > dev_ctrl->phx_dev[i].size){
+				// get the maximum BAR size for each GPU device, which is the size of the GPU memory
 				dev_ctrl->phx_dev[i].paddr = pci_resource_start(dev_ctrl->phx_dev[i].dev, j);
 				dev_ctrl->phx_dev[i].size = size;
 			}
@@ -138,6 +149,8 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 		if (dev_ctrl->phx_dev[i].dev->bus->number != 0x83) {//TODOwh
 			continue;
 		}
+
+		// remap the GPU device's BAR memory to the kernel space
 		ret = fgds_devm_memremap(&dev_ctrl->phx_dev[i]);
 		if (ret)
 			return ret;
@@ -145,6 +158,10 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 	return 0;
 }
 
+/**
+ * @file fgds.c
+ * @brief fgds-fs character device open operation. It will save the device metadata in the file structure.
+ */
 static int fgds_open(struct inode *inode, struct file *filp) {
 	int ret = 0;
 	int dev_idx;
@@ -158,6 +175,7 @@ static int fgds_open(struct inode *inode, struct file *filp) {
 			ret = -1;
 			goto out;
 		}
+		// save the device metadata in the file structure
 		filp->private_data = &ctrl.phx_dev[dev_idx];
 	}
 out:
@@ -199,9 +217,16 @@ static const struct file_operations fgds_chr_fops = {
     .mmap = fgds_mmap,
 };
 
+/**
+ * @brief Delete the fgds-fs character device and unmap the remapped GPU device's BAR memory from the kernel space.
+ * @param cdev: Pointer to the character device structure.
+ * @param cdev_device: Pointer to the device structure associated with the character device.
+ * @param dev: Pointer to the fgds-fs device structure.
+ */
 void fgds_cdev_del(struct cdev *cdev, struct device *cdev_device,
                     struct fgds_dev *dev) {
 	cdev_device_del(cdev, cdev_device);
+	// unmap the remapped GPU device's BAR memory from the kernel space
 	if (dev->remap) {
 		devm_memunmap_pages(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
 		dev->pci_mem_va = NULL;
@@ -278,15 +303,21 @@ destroy_subsys_class:
 	return ret;
 }
 
+/** 
+ * @file fgds.c
+ * @brief fgds-fs kernel module initialization. It will use the memory service provided by the ZONE_DEVICE to remap the GPU device's PCIe BAR memory to the kernel space, and create a character device for each GPU device.
+ */
 static int __init fgds_init(void) {
 	int ret, i;
 
+	// get nvidia_p2p symbols
 	if (nvfs_nvidia_p2p_init()) {
 		printk("Could not load nvidia_p2p* symbols\n");
 		ret = -EOPNOTSUPP;
 		return -1;
 	}
 
+	// Initialize the GPU information table
 	nvfs_fill_gpu2peer_distance_table_once();
 	npu_num = 0;
 	for (i = 0; i < MAX_DEV_NUM; i++) {
@@ -303,22 +334,33 @@ static int __init fgds_init(void) {
 		printk("devdrv_get_devnum error:%u\n", npu_num);
 		return -1;
 	}
+    // obtain the PCIe BAR information of each GPU device via the PCIe bus 
+    // and remap the GPU device's BAR memory to the kernel space.
 	ret = fgds_ctrl_init(&ctrl, npu_num);
 	if (ret != 0) {
 		printk("npu_ctrl_init error:%d\n", ret);
 		return -1;
 	}
+
+    // create a fgds-fs character device for each GPU device
 	ret = fgds_cdev_init(&ctrl);
 	if (ret) {
 		printk("fgds_init error!\n");
 		return -1;
 	}
+
+    // initialize the hash table to store the registered GPU memory regions
 	fgds_mbuffer_init();
 	return 0;
 }
 
+/**
+ * @file fgds.c
+ * @brief fgds-fs kernel module uninitialization. It will delete the character devices created during initialization, and unmap the remapped GPU device's BAR memory from the kernel space.
+ */
 static void __exit fgds_exit(void) {
 	int i;
+	// delete the character devices created during initialization
 	for (i = 0; i < ctrl.dev_num; i++) { //TODOwh
 		if (ctrl.phx_dev[i].dev->bus->number != 0x83) {
 			printk("npu%u: bus is %x, skip\n", i, ctrl.phx_dev[i].dev->bus->number);
@@ -328,9 +370,11 @@ static void __exit fgds_exit(void) {
 		fgds_cdev_del(&ctrl.phx_dev[i].cdev, &ctrl.phx_dev[i].device, &ctrl.phx_dev[i]);
 	}
 
+	// delete nvidia_p2p symbols
 	nvfs_nvidia_p2p_exit();
-
+	// destroy fgds character device class
 	class_destroy(fgds_chr_class);
+	// unregister the character device region
 	unregister_chrdev_region(fgds_chr_devt, FGDS_MINORS);
 	ida_destroy(&fgds_chr_minor_ida);
 

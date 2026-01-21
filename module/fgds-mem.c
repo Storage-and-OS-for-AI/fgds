@@ -110,6 +110,14 @@ out:
     return NULL; 
 } 
 
+/**
+ * @brief Map a device address to a user-space virtual address. It will get the physical pages of the GPU memory region and create a mapping between the GPU memory region and the host memory region.
+ * @param mbuffer: Pointer to the mmap buffer structure.
+ * @param devaddr: The device address to be mapped.
+ * @param dev_len: The length of the device memory region.
+ * @return On success, 0 is returned.
+ *         On failure, a negative error code is returned.
+ */
 int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len) {
     struct fgds_dev *dev = NULL;
     struct gpu_region* gd = NULL;
@@ -133,6 +141,7 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
         goto out;
     }
     
+    // calculate the number of device pages and host pages needed for the mapping
     nr_dev_pages = DIV_ROUND_UP(dev_len, page_size);
 
     mbuffer->dev_page_num = nr_dev_pages;
@@ -161,6 +170,7 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
         return -ENOMEM;
     }
 
+    // save the information of the mapping descriptor
     mbuffer->map->page_size = GPU_PAGE_SIZE;
     mbuffer->map->release = release_gpu_memory;
     mbuffer->map->size = dev_len;
@@ -184,9 +194,12 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
     }
     gd->pages = NULL;
     mbuffer->map->data = (struct gpu_region*)gd;
+
+    // get the physical pages of the GPU memory region, you can use replace it with your own function
     ret = nvfs_nvidia_p2p_get_pages(0, 0, mbuffer->map->gpuvaddr, GPU_PAGE_SIZE * mbuffer->map->n_addrs, &gd->pages, 
         (void (*)(void*)) force_release_gpu_memory, mbuffer->map);   
     
+    // save the physical addresses of the GPU memory region
     for(i = 0; i < mbuffer->map->n_addrs; i++)
     {
         if(gd->pages->pages[i]==NULL)
@@ -204,6 +217,7 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
         goto out;
     }
     
+    // create the mapping between the GPU memory pages and the host memory pages
     for (i = 0; i < nr_dev_pages; i++) {
         pci_bar_off = dev_page_addrs[i] - mbuffer->dev->paddr;
         cpu_vaddr = (uint64_t)(mbuffer->dev->pci_mem_va + pci_bar_off);
@@ -212,6 +226,7 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
         }
     }
     
+    // establish the mapping between the GPU memory region and the host memory region via vm_insert_pages
     ret = vm_insert_pages(vma, mbuffer->c_vaddr, mbuffer->ppages, &total_pages);
     
     if (ret && total_pages) {
@@ -234,10 +249,21 @@ out:
     return ret;
 }
 
+/**
+ * @brief Map a device address to a user-space virtual address.
+ * @param map_param: Pointer to the mapping parameters structure.
+ * @param devaddr: The device address to be mapped.
+ * @param dev_len: The length of the device memory region.
+ * @param cpuvaddr: The user-space virtual address to map to.
+ * @param length: The length of the user-space virtual address region.
+ * @return On success, 0 is returned.
+ *         On failure, a negative error code is returned.
+ */
 int fgds_map_dev_addr(fgds_ioctl_map_t *map_param, u64 devaddr, u64 dev_len, u64 cpuvaddr, u64 length) {
     int ret = -EINVAL;
     fgds_mmap_buffer_t mbuffer;
     
+    // check and bind the mmap buffer
     mbuffer = fgds_check_and_bind_phony_buffer(cpuvaddr, length);
     if (mbuffer == NULL || mbuffer->vma == NULL || devaddr <= length) {
         return ret;
@@ -245,15 +271,26 @@ int fgds_map_dev_addr(fgds_ioctl_map_t *map_param, u64 devaddr, u64 dev_len, u64
         ret = 0;
         mbuffer->n_vaddr = devaddr;
         mbuffer->dev_len = dev_len;
+        // map the GPU virtual address to the virtual address space created by mmap
         ret = fgds_map_dev_addr_inner(mbuffer, devaddr, dev_len);
         return ret;
     }
 }
 
 void fgds_mbuffer_put(fgds_mmap_buffer_t mbuffer);
+/**
+ * @brief Release the mapping descriptor and put the mmap buffer.
+ * @param map_param: Pointer to the mapping parameters structure.
+ * @param devaddr: The device address to be unmapped.
+ * @param dev_len: The length of the device memory region.
+ * @param cpuvaddr: The user-space virtual address to unmap from.
+ * @param length: The length of the user-space virtual address region.
+ */
 void fgds_map_dev_release(fgds_ioctl_map_t *map_param, u64 devaddr, u64 dev_len, u64 cpuvaddr, u64 length) {
     fgds_mmap_buffer_t mbuffer;
+    // query the mmap buffer from the hash table using the user-space virtual address
     mbuffer = fgds_check_and_bind_phony_buffer(cpuvaddr, length);
+    // put the mmap buffer and delete the mapping descriptor
     fgds_mbuffer_put(mbuffer);
 }
 
@@ -398,13 +435,23 @@ error:
     return ret;
 }
 
+/**
+ * @file fgds-mem.c
+ * @brief fgds-fs character device mmap operation. It will set the vma flags and save the vma into the hash table.
+ * @param filp: Pointer to the device file structure.
+ * @param vma: Pointer to the virtual memory area structure.
+ * @return On success, 0 is returned.
+ *         On failure, a negative error code is returned.
+ */
 int fgds_mmap(struct file *filp, struct vm_area_struct *vma) {
     int ret;
     struct mm_struct *mm = current->mm;
+
+    // set the vma flags for the memory mapping
 #ifdef NVFS_VM_FLAGS_NOT_CONSTANT
-    vma->vm_flags &= ~VM_PFNMAP;
-    vma->vm_flags &= ~VM_IO;
-    vma->vm_flags |= VM_MIXEDMAP;
+    vma->vm_flags &= ~VM_PFNMAP; // this region is not a direct physical page frame mapping
+    vma->vm_flags &= ~VM_IO;    // not used for device IO memory
+    vma->vm_flags |= VM_MIXEDMAP;    // allow both anonymous and page-frame mappings
     vma->vm_flags |= mm->def_flags;
 #else
     unsigned long vm_flags;
@@ -416,9 +463,11 @@ int fgds_mmap(struct file *filp, struct vm_area_struct *vma) {
     vm_flags_set(vma, vm_flags);
 #endif
     vma->vm_pgoff = 0;
+    // set the page protection to non-cached
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
     if (vma->vm_pgoff == 0) {
+         // save the vma into the hash table
         ret = fgds_add_phony_buffer(filp, vma);
         return ret;
     }
