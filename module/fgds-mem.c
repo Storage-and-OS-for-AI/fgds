@@ -1,4 +1,4 @@
-#include <asm/page_types.h>
+//#include <asm/page_types.h>
 #include <linux/kernel.h> 
 #include <linux/blkdev.h> 
 #include <linux/blk_types.h> 

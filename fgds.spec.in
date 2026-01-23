@@ -1,5 +1,4 @@
 %define debug_package %{nil}
-%define __brp_python_bytecompile true // skip python bytecompile
 %define __name fgds
 %define __version @VERSION@
 %define __release @RELEASE@
@@ -18,8 +17,8 @@ Vendor:         KylinOS
 URL:            www.kylinos.cn
 Source0:        %{name}-%{version}.tar.gz
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root
-BuildRequires:	cuda-repo cmake gcc g++ util-linux kmod kernel-devel kernel-core liburing-devel
-BuildRequires:	make, rpm-build
+BuildRequires:	cuda-repo-kylin10-12-8-local cmake gcc g++ util-linux kmod kernel-devel kernel-core liburing-devel
+BuildRequires:	make, rpm-build, cuda-toolkit
 
 %description
 The FGDS is a refactored I/O Stack for GPU Direct Storage without Phony Buffers.
@@ -27,7 +26,6 @@ This package provide the fgds kernel module and dynamic library for user space.
 
 %prep
 %setup -n %{name}-%{version}
-tar xzf %{SOURCE1} -C deploy
 
 %build
 mkdir build && cd build && cmake .. && make && cd ..
@@ -38,6 +36,7 @@ mkdir -p $RPM_BUILD_ROOT/%{__install_dir}
 mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/bin
 mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/modules
 mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/docs
+mkdir -p $RPM_BUILD_ROOT/usr/lib64
 
 cp -aprv build/bin $RPM_BUILD_ROOT/%{__install_dir}/
 cp -aprv python $RPM_BUILD_ROOT/%{__install_dir}/
@@ -82,7 +81,14 @@ fi
 %{__install_dir}/python/__init__.py
 %{__install_dir}/python/README.md
 %{__install_dir}/python/setup.py
-
+%{__install_dir}/bin/breakdown
+%{__install_dir}/bin/end-to-end
+%{__install_dir}/bin/example
+%{__install_dir}/bin/kvcache
+%{__install_dir}/bin/microbenchmark
+%{__install_dir}/bin/safetensor
+%{__install_dir}/modules/fgdsfs.ko
+/usr/lib64/libfgds.so
 
 %changelog
 * Tue Mar 26 2024 - kuangkai@kylinos.cn
