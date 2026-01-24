@@ -284,7 +284,8 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
 			PCI_FUNC(pdev->devfn));
 	}
 
-    for (int i = 0; i < DEV_NUM; i++) {
+    int i;
+    for (i = 0; i < DEV_NUM; i++) {
         gpu_info_table[i] = temp_info[DEV_NUM - 1 - i];
     }
 	
