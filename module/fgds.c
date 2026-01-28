@@ -83,18 +83,16 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 	if (phx_dev->p2p_pgmap == NULL)
 		return -ENOMEM;
 
-	printk("npu_devm_memremap 1\n");
 	pgmap = &phx_dev->p2p_pgmap->pgmap;
 
-	pgmap->range.start = phx_dev->paddr + 0x200000;
-	pgmap->range.end = phx_dev->paddr + phx_dev->size -1 - 0x200000;
-	printk("npu->pgmap->res.start is %llx, end is %llx\n", pgmap->range.start,
+	pgmap->range.start = phx_dev->paddr + 0x600000;
+	pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
+
+	printk("npu->pgmap->res.start is %#llx, end is %#llx\n", pgmap->range.start,
 			pgmap->range.end);
 	pgmap->nr_range = 1;
 	pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
-
 	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);  // 为这个设备的物理地址映射虚拟地址
-
 	printk("npu numa is %d\n", phx_dev->dev->dev.numa_node);
 
 	if (IS_ERR_OR_NULL(phx_dev->pci_mem_va)) {
@@ -103,7 +101,7 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 		return -22;
 	}
 
-	printk("npu devm_memremap_pages success, addr is %lx\n",
+	printk("npu devm_memremap_pages success, addr is %#lx\n",
 			(uintptr_t)phx_dev->pci_mem_va);
 	phx_dev->remap = 1;
 	ret = 0;
@@ -143,7 +141,7 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 		}
 		dev_ctrl->phx_dev[i].idx = i;
 		dev_ctrl->phx_dev[i].remap = 0;
-		printk("npu%u: bus is %x, size is %llu, paddr is %llx\n", i,
+		printk("npu%u: bus is %x, size is %llu, paddr is %#llx\n", i,
 			dev_ctrl->phx_dev[i].dev->bus->number, dev_ctrl->phx_dev[i].size,
 			dev_ctrl->phx_dev[i].paddr);
 		if (dev_ctrl->phx_dev[i].dev->bus->number != 0x83) {//TODOwh
@@ -185,10 +183,20 @@ out:
 
 static int fgds_release(struct inode *inode, struct file *filp) { return 0; }
 
+/**
+ * @file fgds.c
+ * @brief fgds-fs character device ioctl operation. It will handle the IOCTL commands for mapping and unmapping device addresses.
+ * @param filp: Pointer to the device file structure.
+ * @param cmd: The IOCTL command.
+ * @param arg: The argument for the IOCTL command.
+ * @return On success, 0 is returned.
+ *         On failure, a negative error code is returned.
+ */
 static long fgds_ioctl(struct file *filp, unsigned int cmd,
                         unsigned long arg) {
 	void __user *argp = (void *)arg;
 	switch (cmd) {
+		//  map a device address to a user-space virtual address
 		case FGDS_IOCTL_MAP: {
 			struct fgds_ioctl_map_s map_param;
 			if (copy_from_user(&map_param, argp, sizeof(struct fgds_ioctl_map_s)))
@@ -196,6 +204,7 @@ static long fgds_ioctl(struct file *filp, unsigned int cmd,
 			return fgds_map_dev_addr(&map_param, map_param.n_vaddr, map_param.n_size,
 									map_param.c_vaddr, map_param.c_size);
 		}
+		// unmap and clean up the device address mapping
 		case FGDS_IOCTL_UNMAP: {
 			struct fgds_ioctl_map_s map_param;
 			if (copy_from_user(&map_param, argp, sizeof(struct fgds_ioctl_map_s)))
@@ -334,7 +343,7 @@ static int __init fgds_init(void) {
 		printk("devdrv_get_devnum error:%u\n", npu_num);
 		return -1;
 	}
-    // obtain the PCIe BAR information of each GPU device via the PCIe bus 
+    // obtain the PCIe BAR information of each GPU device via the PCIe bus
     // and remap the GPU device's BAR memory to the kernel space.
 	ret = fgds_ctrl_init(&ctrl, npu_num);
 	if (ret != 0) {
@@ -378,7 +387,7 @@ static void __exit fgds_exit(void) {
 	unregister_chrdev_region(fgds_chr_devt, FGDS_MINORS);
 	ida_destroy(&fgds_chr_minor_ida);
 
-	printk("Good bye!");
+	printk("fgds_exit, Good bye!");
 }
 
 module_init(fgds_init);
