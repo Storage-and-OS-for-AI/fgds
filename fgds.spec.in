@@ -1,0 +1,95 @@
+%define debug_package %{nil}
+%define __name fgds
+%define __version @VERSION@
+%define __release @RELEASE@
+%define __prefix /opt
+%define __install_dir %{__prefix}/%{__name}
+%define __install_local_bin_dir /usr/local/bin
+%define __install_bin_dir %{__install_dir}
+
+Name:           %{__name}
+Summary:        The fast GPU Direct Storage filesystem
+Version:        %{__version}
+Release:        %{__release}
+License:        Commercial
+Group:          System Environment/Base
+Vendor:         KylinOS
+URL:            www.kylinos.cn
+Source0:        %{name}-%{version}.tar.gz
+BuildRoot:      %{_tmppath}/%{name}-%{version}-root
+BuildRequires:	cuda-repo-kylin10-12-8-local cmake gcc g++ util-linux kmod kernel-devel kernel-core liburing-devel
+BuildRequires:	make, rpm-build, cuda-toolkit
+
+%description
+The FGDS is a refactored I/O Stack for GPU Direct Storage without Phony Buffers.
+This package provide the fgds kernel module and dynamic library for user space.
+
+%prep
+%setup -n %{name}-%{version}
+
+%build
+mkdir build && cd build && cmake .. && make && cd ..
+
+%install
+[ -e %{buildroot} ] && rm -rf %{buildroot}
+mkdir -p $RPM_BUILD_ROOT/%{__install_dir}
+mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/bin
+mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/modules
+mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/docs
+mkdir -p $RPM_BUILD_ROOT/usr/lib64
+
+cp -aprv build/bin $RPM_BUILD_ROOT/%{__install_dir}/
+cp -aprv python $RPM_BUILD_ROOT/%{__install_dir}/
+cp -aprv scripts $RPM_BUILD_ROOT/%{__install_dir}/
+cp -apv build/libfgds.so $RPM_BUILD_ROOT/usr/lib64/libfgds.so
+cp -apv build/module/fgdsfs.ko $RPM_BUILD_ROOT/%{__install_dir}/modules/fgdsfs.ko
+cp -apv README.md $RPM_BUILD_ROOT/%{__install_dir}/docs/README.md
+
+
+%post
+if [ $1 -eq 1 ]; then
+    echo "Please make sure the cuda toolkit and cuda diver is ready before using the fgds"
+    echo "Check the docs/README.md for more details."
+fi
+
+%clean
+[ -d "$RPM_BUILD_ROOT" ] && rm -fr $RPM_BUILD_ROOT
+[ -d "%{buildroot}" ] && rm -rf %{buildroot}
+[ -d "$RPM_BUILD_DIR/%{name}-%{version}" ] && rm -fr $RPM_BUILD_DIR/%{name}-%{version}
+
+%files
+%defattr(-,root,root)
+%dir %{__install_dir}
+%dir %{__install_dir}/python
+%dir %{__install_dir}/python/fgds
+%dir %{__install_dir}/python/test
+%dir %{__install_dir}/scripts
+%dir %{__install_dir}/docs
+%{__install_dir}/docs/README.md
+%{__install_dir}/scripts/breakdown.sh
+%{__install_dir}/scripts/kvcache.sh
+%{__install_dir}/scripts/load_safetensors.py
+%{__install_dir}/scripts/logger.py
+%{__install_dir}/scripts/micro.py
+%{__install_dir}/scripts/nfs.sh
+%{__install_dir}/scripts/nvme_of.sh
+%{__install_dir}/scripts/set_cpu_freq.sh
+%{__install_dir}/python/fgds/__init__.py
+%{__install_dir}/python/fgds/fgds.py
+%{__install_dir}/python/fgds/fgds_bind.py
+%{__install_dir}/python/test/test.py
+%{__install_dir}/python/__init__.py
+%{__install_dir}/python/README.md
+%{__install_dir}/python/setup.py
+%{__install_dir}/bin/breakdown
+%{__install_dir}/bin/end-to-end
+%{__install_dir}/bin/example
+%{__install_dir}/bin/kvcache
+%{__install_dir}/bin/microbenchmark
+%{__install_dir}/bin/safetensor
+%{__install_dir}/modules/fgdsfs.ko
+/usr/lib64/libfgds.so
+
+%changelog
+* Tue Mar 26 2024 - kuangkai@kylinos.cn
+- Initial package

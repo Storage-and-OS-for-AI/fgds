@@ -55,15 +55,28 @@ if (no_cc)
     set(CCUDA_NVCC_FLAGS "${CMAKE_C_FLAGS} -D__NO_COHERENCE__")
 endif ()
 
+# Detect system architecture for CUDA paths
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(CUDA_ARCH_TARGET "sbsa-linux")
+    message(STATUS "Detected aarch64 architecture")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    set(CUDA_ARCH_TARGET "x86_64-linux")
+    message(STATUS "Detected x86_64 architecture")
+else()
+    message(WARNING "Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}, defaulting to x86_64-linux")
+    set(CUDA_ARCH_TARGET "x86_64-linux")
+endif()
+
 include_directories ("${PROJECT_SOURCE_DIR}/libfgds/include"
-                    "${CUDA_TOOLKIT_ROOT_DIR}/targets/x86_64-linux/include/")
+                    "${CUDA_TOOLKIT_ROOT_DIR}/targets/${CUDA_ARCH_TARGET}/include/")
 
 # Try to find Nvidia driver
 if (CUDA_FOUND AND NOT no_cuda)
 
     # Try to find Nvidia headers (will choose the newest version)
-    file (GLOB_RECURSE driver_paths "/usr/src/nvidia-*/nv-p2p.h")
-    string (REPLACE "nv-p2p.h" "" driver_paths "${driver_paths}")
+    file (GLOB_RECURSE driver_paths "/usr/src/nvidia-*/nv-reg.h")
+    string (REPLACE "nv-reg.h" "" driver_paths "${driver_paths}")
+    message(STATUS, "driver path is ${driver_paths}")
     if (driver_paths)
         list (REVERSE driver_paths)
     endif ()

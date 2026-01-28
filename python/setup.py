@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name='fgds',
     version='0.1.2',
-    packages=["fgds", "fgds_backend"],
+    packages=find_packages(),
     author='kuangkai',
     author_email='kuangkai@kylinos.cn',
     description='The python module of fgds api',
