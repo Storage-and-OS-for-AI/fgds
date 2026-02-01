@@ -1,0 +1,4 @@
+{
+  "use_all_gpus": false,
+  "gpuids": [0]
+}

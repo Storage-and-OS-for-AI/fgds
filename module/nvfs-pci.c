@@ -260,7 +260,6 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
 
 	while ((pdev = pci_get_class(class, pdev)) != NULL) {
 		uint64_t pdevinfo;
-		unsigned int idx = UINT_MAX;
 
 		// devices of our interest should be associated with bus
 		if (!pdev->bus)
@@ -278,19 +277,52 @@ static void __nvfs_find_all_device_paths(uint64_t paths[][MAX_PCI_DEPTH],
 			DEV_NUM++;
 		} 
 
-		printk("nvfs_pci pci device entry[%u] %04x:%02x:%02x:%d path:",
-			idx, pci_domain_nr(pdev->bus), pdev->bus->number,
+		printk("nvfs_pci pci device entry: %04x:%02x:%02x:%d path:",
+			pci_domain_nr(pdev->bus), pdev->bus->number,
 			PCI_SLOT(pdev->devfn),
 			PCI_FUNC(pdev->devfn));
 	}
+    printk("nvfs_pci: DEV_NUM is %d\n", DEV_NUM);
+    /*
+     * 将temp_info中的GPU顺序整理为与nvidia-smi一致，让gpu_info中的设备下标和cuda gpu id下标一致
+     * 假设nvidia-smi输出的GPU顺序与PCI Bus:Device:Function的升序一致
+     */
+    struct gpu_info {
+        uint64_t pdevinfo;
+        u16 domain;
+        u8 bus;
+        u8 slot;
+        u8 func;
+    } infos[MAX_GPU_DEVS];
 
-    int i;
+    int i, j;
+    // 先将temp_info内容提取到infos并分解
     for (i = 0; i < DEV_NUM; i++) {
-        gpu_info_table[i] = temp_info[DEV_NUM - 1 - i];
+        infos[i].pdevinfo = temp_info[i];
+        infos[i].domain = (temp_info[i] >> 24) & 0xffff;
+        infos[i].bus    = (temp_info[i] >> 16) & 0xff;
+        infos[i].slot   = (temp_info[i] >> 8)  & 0xff;
+        infos[i].func   = temp_info[i] & 0xff;
+		// printk("nvfs_pci: infos[%d] = %04x:%02x:%02x:%d\n", i, infos[i].domain, infos[i].bus, infos[i].slot, infos[i].func);
     }
-	
-	return;
 
+    // 按(domain, bus, slot, func)升序排序
+    for (i = 0; i < DEV_NUM - 1; i++) {
+        for (j = i + 1; j < DEV_NUM; j++) {
+            if ((infos[i].domain > infos[j].domain) ||
+                (infos[i].domain == infos[j].domain && infos[i].bus  > infos[j].bus) ||
+                (infos[i].domain == infos[j].domain && infos[i].bus == infos[j].bus  && infos[i].slot > infos[j].slot) ||
+                (infos[i].domain == infos[j].domain && infos[i].bus == infos[j].bus  && infos[i].slot == infos[j].slot && infos[i].func > infos[j].func)) {
+                struct gpu_info tmp = infos[i];
+                infos[i] = infos[j];
+                infos[j] = tmp;
+            }
+        }
+    }
+
+    for (i = 0; i < DEV_NUM; i++) {
+        gpu_info_table[i] = infos[i].pdevinfo;
+    }
 }
 
 
@@ -306,8 +338,6 @@ void nvfs_fill_gpu2peer_distance_table_once(void) {
 	memset ((u8 *)gpu_info_table, 0, sizeof(gpu_info_table));
 	printk("nvfs listing GPU paths:\n");
 	__nvfs_find_all_device_paths(gpu_bdf_map, MAX_GPU_DEVS, PCI_CLASS_DISPLAY_3D << 8);
-	__nvfs_find_all_device_paths(gpu_bdf_map, MAX_GPU_DEVS, PCI_CLASS_DISPLAY_VGA << 8);
-
 }
 /*
  *  Description: get pci distance between a GPU and the peer dma device

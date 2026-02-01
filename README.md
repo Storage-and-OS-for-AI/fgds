@@ -54,10 +54,18 @@ make -j
 ```
 Note: this will compile all the benchmarks including the kernel module
 ## How to Use
+### 0. Edit the config.json
+First, in the config.json file located in the project's root directory, specify which GPUs to use. If `use_all_gpus` is set to `true`, it indicates that all GPUs on the machine will be used. If `use_all_gpus` is set to `false`, it indicates that only the GPUs specified in the `gpuids` array will be used.
+
+The priority of `use_all_gpus` is higher than that of `gpuids`. That is, as long as `use_all_gpus` is set to `true`, all GPUs will be used regardless of the content of `gpuids`.
 ### 1. Install Kernel Module
+
 ```shell
-cd build && sudo make insmod
+sh scripts/load_fgds.sh 
 ```
+This script will utilize the GPU specified in config.json
+If you directly run sudo insmod build/module/fgdsfs.ko, it will default to using only GPU0.
+
 Note: must run `nvidia-smi` to `modprobe` nvidia driver before install fgds kernel module.
 ### 2. Example for Using libfgds
 We have provided a simple example to illustrate how to program using libfgds

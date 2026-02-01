@@ -12,8 +12,9 @@ FILE_PATH = "/mnt/fgds/test.data"
 SUBDIR = "fgds"
 # 1M 
 MB = 1024
-io_sizes = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
-threads = [1, 2, 4, 8, 16, 32, 64, 128]
+io_sizes = [4, 128, 1024, 4096, 16384, 32768, 65536]
+#threads = [1, 2, 4, 8, 16, 32, 64, 128]
+threads = [1]
 batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 
 read_write = ["read", "write"]
@@ -37,8 +38,8 @@ pattern = r"(?:Average IO bandwidth|Average IO latency|95th percentile latency|9
 
 def run_bench(rw="read", io_size=4, thread=1, batch_size=16, file_path_=FILE_PATH, async_mode=0, xfer_mode=0):
     if batch_size > 64:
-        return f"{micro_exec} -f {file_path_} -l 10G -s {io_size}k -t {thread} -i {batch_size} -m {rw} -a {async_mode} -d 4 -x {xfer_mode}"
-    return f"numactl -N 0 {micro_exec} -f {file_path_} -l 10G -s {io_size}k -t {thread} -i 1 -m {rw} -a {async_mode} -d 4 -x {xfer_mode}"
+        return f"{micro_exec} -f {file_path_} -l 10G -s {io_size}k -t {thread} -i {batch_size} -m {rw} -a {async_mode} -d 0 -x {xfer_mode}"
+    return f"numactl -N 0 {micro_exec} -f {file_path_} -l 10G -s {io_size}k -t {thread} -i 1 -m {rw} -a {async_mode} -d 0 -x {xfer_mode}"
 
 def parse_result(result):
     matches = re.findall(pattern, result)

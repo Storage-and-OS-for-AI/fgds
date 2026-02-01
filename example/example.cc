@@ -284,12 +284,12 @@ int fgds_demo() {
 
     file_fd = open(file_path, O_CREAT | O_RDWR | O_DIRECT, 0644);
 
-    printf("fgds init start\n");
+    printf("fgds test start, file_path: %s, device_id: %d\n", file_path, device_id);
     ret = fgds_open(device_id);
-    printf("fgds init ret: %d\n", ret);
+    printf("fgds_open ret: %d\n", ret);
 
     if (ret != 0) {
-        printf("fgds init failed: %d\n", ret);
+        printf("fgds_open failed: %d\n", ret);
         return 1;
     }   
     cudaMalloc(&gpu_buffer, io_size);
@@ -323,22 +323,32 @@ int fgds_demo() {
     close(file_fd);
 }
 
-int main(int argc, char* argv[]) {
-	cudaSetDevice(device_id);
+int test(int argc, char* argv[]) {
     if (argc == 1) {
-       printf("err, Usage:%s <blcoksize>, like ./example 4", argv[0]);
-       return 1;
+        printf("err, Usage:%s <blcoksize>, like ./example 4", argv[0]);
+        return 1;
+     }
+     int iosize_mb = std::atoi(argv[1]);
+     char* type = argv[2];
+     if (type != NULL && (strcmp(type, "posix") == 0)) {
+         // 如果是./example 4 posix,表示blocksize 4MB,测读文件到内存,然后拷贝到显存的性能
+         printf("posix loop:\n");
+         test_posix_loop(iosize_mb);
+     } else {
+         // 如果是./example 4,表示blocksize 4MB,读文件到内存的性能.不涉及从内存拷贝到显存
+         printf("only read fd loop\n");
+         test_only_read_fd_loop(iosize_mb);
+     }
+     return 0;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        printf("Usage: %s <gpu_id>\n", argv[0]);
+        return 1;
     }
-    int iosize_mb = std::atoi(argv[1]);
-    char* type = argv[2];
-    if (type != NULL && (strcmp(type, "posix") == 0)) {
-        // 如果是./example 4 posix,表示blocksize 4MB,测读文件到内存,然后拷贝到显存的性能
-        printf("posix loop:\n");
-        test_posix_loop(iosize_mb);
-    } else {
-        // 如果是./example 4,表示blocksize 4MB,读文件到内存的性能.不涉及从内存拷贝到显存
-        printf("only read fd loop\n");
-        test_only_read_fd_loop(iosize_mb);
-    }
+    device_id = std::atoi(argv[1]);
+    cudaSetDevice(device_id);
+    fgds_demo();
     return 0;
 }
