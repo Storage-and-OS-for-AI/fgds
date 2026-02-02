@@ -42,7 +42,7 @@ struct cdev fgds_chr_dev;
 struct fgds_ctrl ctrl;
 
 #define NUM_THREADS 128
-#define MAX_GPUIDS 16
+#define MAX_GPUIDS 8 // 和用户态的限制FGDS_MAX_DEVICES保持一致
 
 u32 npu_num;
 extern uint64_t gpu_info_table[MAX_GPU_DEVS];

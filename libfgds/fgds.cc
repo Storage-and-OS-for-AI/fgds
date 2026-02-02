@@ -15,7 +15,7 @@
 
 #define HUGE_PAGE_SIZE (64 * 1024)
 #define SMALL_PAGE_SIZE (4 * 1024)
-#define MMAP_LIMIT (1024 * 1024 * 1024)
+#define MMAP_LIMIT (1024 * 1024 * 1024) // 1MB
 #define FGDS_MAX_DEVICES 8
 #define QD 128
 
