@@ -96,42 +96,54 @@ if (CUDA_FOUND AND NOT no_cuda)
     endif ()
 endif ()
 
-# # Module source files
-set (module_root "${PROJECT_SOURCE_DIR}/module")
-set (module_output "${CMAKE_BINARY_DIR}/module")
+set (install_dir "/opt/fgds")
+if (NOT no_module)
+    set (module_root "${PROJECT_SOURCE_DIR}/module")
+    set (module_output "${CMAKE_BINARY_DIR}/module")
+else()
+    # rpm builds do not generate kernel modules but provide users a module directory so that they can build them themselves.
+    set (module_root "${install_dir}/module")
+    set (module_output "${install_dir}/module")
+endif ()
+
 # for Makefile.in, do not delete
-set (module_ccflags "-I${PROJECT_SOURCE_DIR}/libnvm/include -I${driver_include}")
-configure_file ("${module_root}/Makefile.in" "${module_output}/Makefile" @ONLY)
+set (module_ccflags "-I${driver_include}")
+configure_file ("${PROJECT_SOURCE_DIR}/module/Makefile.in" "${CMAKE_BINARY_DIR}/module/Makefile" @ONLY)
 message (STATUS "Configuring module build in ${module_output}")
 
-add_custom_target(
-    modules
-    ALL
-    COMMAND make
-    WORKING_DIRECTORY ${module_output}
-    COMMENT "Building kernel module"
-)
+# # Module source files (skip when no_module=ON)
+if (NOT no_module)
+    add_custom_target(
+        modules
+        ALL
+        COMMAND make
+        WORKING_DIRECTORY ${module_output}
+        COMMENT "Building kernel module"
+    )
 
-add_custom_target(
-    clean_modules
-    COMMAND make clean
-    WORKING_DIRECTORY ${module_output}
-    COMMENT "Cleaning kernel module"
-)
+    add_custom_target(
+        clean_modules
+        COMMAND make clean
+        WORKING_DIRECTORY ${module_output}
+        COMMENT "Cleaning kernel module"
+    )
 
-add_custom_target(
-    insmod
-    COMMAND sudo make insmod
-    WORKING_DIRECTORY ${module_output}
-    COMMENT "Inserting kernel module"
-)
+    add_custom_target(
+        insmod
+        COMMAND sudo make insmod
+        WORKING_DIRECTORY ${module_output}
+        COMMENT "Inserting kernel module"
+    )
 
-add_custom_target(
-    rmmod
-    COMMAND sudo make rmmod
-    WORKING_DIRECTORY ${module_output}
-    COMMENT "Removing kernel module"
-)
+    add_custom_target(
+        rmmod
+        COMMAND sudo make rmmod
+        WORKING_DIRECTORY ${module_output}
+        COMMENT "Removing kernel module"
+    )
+else ()
+    message (STATUS "Skipping kernel module build (no_module=ON)")
+endif ()
 
 
 # Library source files

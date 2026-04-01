@@ -3,7 +3,7 @@
 NAME="fgds"
 VERSION="1.0.0"
 BUILDTAG="HEAD"
-RELEASE=1
+RELEASE=2
 RPMBUILD_TMPDIR=$(pwd)/tmp-rpmbuild
 
 function make_srpm() {

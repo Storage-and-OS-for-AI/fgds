@@ -12,16 +12,16 @@ FILE_PATH = "/mnt/fgds/test.data"
 SUBDIR = "fgds"
 # 1M 
 MB = 1024
-#io_sizes = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
-io_sizes = [1024, 4096, 16384, 32768, 65536]
+io_sizes = [4, 32, 128, 512, 1024, 4096, 32768, 65536]
 #threads = [1, 2, 4, 8, 16, 32, 64, 128]
 threads = [1]
 batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
 
-#read_write = ["read", "write"]
-read_write = ["read"]
+read_write = ["read", "write"]
 file_path = os.path.dirname(os.path.realpath(__file__))
 micro_exec = os.path.join(file_path, "..", "build", "bin", "microbenchmark")
+if os.path.dirname(file_path).startswith("/opt/fgds"):
+    micro_exec = os.path.join(file_path, "..", "bin", "microbenchmark")
 
 class test_config:
     def __init__(self):

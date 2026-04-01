@@ -1,4 +1,5 @@
 %define debug_package %{nil}
+%define __brp_python_bytecompile true // skip python bytecompile
 %define __name fgds
 %define __version @VERSION@
 %define __release @RELEASE@
@@ -11,61 +12,67 @@ Name:           %{__name}
 Summary:        The fast GPU Direct Storage filesystem
 Version:        %{__version}
 Release:        %{__release}
-License:        Commercial
+License:        Apache2.0 
 Group:          System Environment/Base
-Vendor:         KylinOS
-URL:            www.kylinos.cn
+Vendor:         KylinSoft
+URL:            https://github.com/nicexlab/phoenix
 Source0:        %{name}-%{version}.tar.gz
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root
-BuildRequires:	cuda-repo-kylin10-12-8-local cmake gcc g++ util-linux kmod kernel-devel kernel-core liburing-devel
-BuildRequires:	make, rpm-build, cuda-toolkit
+BuildRequires:  cmake >= 3.18, gcc >= 11.4.0, g++ >= 11.4.0
+BuildRequires:  kernel-devel, kernel-core, liburing-devel, libaio-devel, util-linux, kmod
+BuildRequires:  make, rpm-build, chrpath, cuda-toolkit, nvidia-driver-cuda, kmod-nvidia-open-dkms
+ExcludeArch:    loongarch64
 
 %description
 The FGDS is a refactored I/O Stack for GPU Direct Storage without Phony Buffers.
 This package provide the fgds kernel module and dynamic library for user space.
 
 %prep
-%setup -n %{name}-%{version}
+%setup -q -n %{name}-%{version}
 
 %build
-mkdir build && cd build && cmake .. && make && cd ..
+export CUDA_HOME="/usr/local/cuda"
+export PATH=$PATH:$CUDA_HOME/bin
+
+mkdir build && cd build && cmake .. -Dno_module=ON && make && cd ..
 
 %install
 [ -e %{buildroot} ] && rm -rf %{buildroot}
 mkdir -p $RPM_BUILD_ROOT/%{__install_dir}
 mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/bin
-mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/modules
 mkdir -p $RPM_BUILD_ROOT/%{__install_dir}/docs
 mkdir -p $RPM_BUILD_ROOT/usr/lib64
 
 cp -aprv build/bin $RPM_BUILD_ROOT/%{__install_dir}/
 cp -aprv python $RPM_BUILD_ROOT/%{__install_dir}/
+cp -aprv module $RPM_BUILD_ROOT/%{__install_dir}/
 cp -aprv scripts $RPM_BUILD_ROOT/%{__install_dir}/
 cp -apv build/libfgds.so $RPM_BUILD_ROOT/usr/lib64/libfgds.so
-cp -apv build/module/fgdsfs.ko $RPM_BUILD_ROOT/%{__install_dir}/modules/fgdsfs.ko
+cp -apv build/module/Makefile $RPM_BUILD_ROOT/%{__install_dir}/module/Makefile
+cp -apv config.json $RPM_BUILD_ROOT/%{__install_dir}/config.json
 cp -apv README.md $RPM_BUILD_ROOT/%{__install_dir}/docs/README.md
+cp -apv README_CN.md $RPM_BUILD_ROOT/%{__install_dir}/docs/README_CN.md
+rm -f $RPM_BUILD_ROOT/%{__install_dir}/module/.gitignore
 
 
 %post
 if [ $1 -eq 1 ]; then
-    echo "Please make sure the cuda toolkit and cuda diver is ready before using the fgds"
-    echo "Check the docs/README.md for more details."
+    echo "Please make sure the cuda toolkit and cuda driver is ready before using the fgds"
+    echo "Check the docs/README_CN.md for more details."
 fi
-
-%clean
-[ -d "$RPM_BUILD_ROOT" ] && rm -fr $RPM_BUILD_ROOT
-[ -d "%{buildroot}" ] && rm -rf %{buildroot}
-[ -d "$RPM_BUILD_DIR/%{name}-%{version}" ] && rm -fr $RPM_BUILD_DIR/%{name}-%{version}
 
 %files
 %defattr(-,root,root)
 %dir %{__install_dir}
 %dir %{__install_dir}/python
 %dir %{__install_dir}/python/fgds
+%dir %{__install_dir}/python/fgds_backend
 %dir %{__install_dir}/python/test
 %dir %{__install_dir}/scripts
 %dir %{__install_dir}/docs
+%dir %{__install_dir}/module
 %{__install_dir}/docs/README.md
+%{__install_dir}/docs/README_CN.md
 %{__install_dir}/scripts/breakdown.sh
 %{__install_dir}/scripts/kvcache.sh
 %{__install_dir}/scripts/load_safetensors.py
@@ -74,10 +81,14 @@ fi
 %{__install_dir}/scripts/nfs.sh
 %{__install_dir}/scripts/nvme_of.sh
 %{__install_dir}/scripts/set_cpu_freq.sh
+%{__install_dir}/scripts/load_fgds.sh
 %{__install_dir}/python/fgds/__init__.py
 %{__install_dir}/python/fgds/fgds.py
 %{__install_dir}/python/fgds/fgds_bind.py
+%{__install_dir}/python/fgds_backend/__init__.py
+%{__install_dir}/python/fgds_backend/fgds_backend.py
 %{__install_dir}/python/test/test.py
+%{__install_dir}/python/test/fgds.yaml
 %{__install_dir}/python/__init__.py
 %{__install_dir}/python/README.md
 %{__install_dir}/python/setup.py
@@ -87,9 +98,36 @@ fi
 %{__install_dir}/bin/kvcache
 %{__install_dir}/bin/microbenchmark
 %{__install_dir}/bin/safetensor
-%{__install_dir}/modules/fgdsfs.ko
+%{__install_dir}/module/configure
+%{__install_dir}/module/fgds.c
+%{__install_dir}/module/fgds.h
+%{__install_dir}/module/fgds-mem.c
+%{__install_dir}/module/fgds-mem.h
+%{__install_dir}/module/Makefile.in
+%{__install_dir}/module/Makefile
+%{__install_dir}/module/nvfs-core.h
+%{__install_dir}/module/nvfs-mmap.h
+%{__install_dir}/module/nvfs-p2p.c
+%{__install_dir}/module/nvfs-p2p.h
+%{__install_dir}/module/nvfs-pci.c
+%{__install_dir}/module/nvfs-pci.h
+%{__install_dir}/module/README.md
+%{__install_dir}/config.json
 /usr/lib64/libfgds.so
 
 %changelog
-* Tue Mar 26 2024 - kuangkai@kylinos.cn
+* Mon Mar 2 2026 - pengkunlun@kylinos.cn - 1.0.0-2
+- Type: bugfix
+- DESC:
+- fix the path of benchmark in micro.py
+- add usage for lmcache backend
+
+* Sat Feb 28 2026 - kuangkai@kylinos.cn - 1.0.0-1
+- Type: bugfix
+- DESC:
+- Memory management optimization
+- change ZONE_DEVICE memory type to MEMORY_DEVICE_GENERIC
+- update the spec file to fix rpmlint error
+
+* Fri Dec 19 2025 - kuangkai@kylinos.cn
 - Initial package

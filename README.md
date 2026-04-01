@@ -115,6 +115,3 @@ sudo bash kvcache.sh
 cd scripts
 sudo python load_safetensors.py
 ```
-
-## Copyright&LICENSE
-Copyright (c) KylinSoft Co., Ltd. 2026-2027.All rights reserved.

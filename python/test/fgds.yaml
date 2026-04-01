@@ -1,0 +1,9 @@
+local_cpu: false
+chunk_size: 256
+fgds_path: "/data3/fgds_lm_end/"
+fgds_buffer_size: 8192
+max_local_disk_size: 50.0
+external_backends: "fgds_backend"
+extra_config:
+  external_backend.phxfs_backend.module_path: fgds_backend.fgds_backend
+  external_backend.phxfs_backend.class_name: FgdsBackend

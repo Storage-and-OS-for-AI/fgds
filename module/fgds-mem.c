@@ -1,5 +1,7 @@
-//#include <asm/page_types.h>
-#include <linux/kernel.h> 
+/*
+ * This file was modified by KylinSoft. Co., Ltd. on 2026
+ */
+#include <linux/kernel.h>
 #include <linux/blkdev.h> 
 #include <linux/blk_types.h> 
 #include <linux/random.h> 
@@ -19,95 +21,101 @@ static DEFINE_HASHTABLE(fgds_io_mbuffer_hash, FGDS_MAX_SHADOW_ALLOCS_ORDER);
 static spinlock_t lock ____cacheline_aligned; 
 atomic_t base_index_cnt = ATOMIC_INIT(0);
 
-void unmap_and_release(struct p2p_vmap* map)
+/*
+ * Common helper to release resources associated with a p2p_vmap.
+ * It:
+ *   - puts the NVIDIA P2P pages (if still present)
+ *   - frees the gpu_region wrapper
+ *   - frees map->pages
+ *
+ */
+static void __fgds_release_gpu_memory_core(struct p2p_vmap *map)
 {
-    if (map->release != NULL && map->data != NULL)
-    {
-        map->release(map);
-    }
+    if (!map)
+        return;
 
-    kfree(map);
-	printk("unmap_and_release\n");
-}
-
-
-void release_gpu_memory(struct p2p_vmap* map)
-{
-    struct gpu_region* gd = (struct gpu_region*) map->data;
+    struct gpu_region *gd = (struct gpu_region *)map->data;
     if (gd != NULL)
     {
         if (gd->pages != NULL)
         {
             nvfs_nvidia_p2p_put_pages(0, 0, map->gpuvaddr, gd->pages);
+            gd->pages = NULL;
         }
         kfree(gd);
         map->data = NULL;
     }
-	if(map->pages!=NULL)
-	{
-		kfree(map->pages);
-	}
-	if(map!=NULL)
-		kfree(map);
+
+    if (map->pages != NULL)
+    {
+        kfree(map->pages);
+        map->pages = NULL;
+    }
+
+    if(map!=NULL) {
+        kfree(map);
+    }
+}
+
+void release_gpu_memory(struct p2p_vmap* map)
+{
+    printk("in fgds-mem.c: release_gpu_memory\n");
+    if (!map)
+        return;
+
+    /* Release all subordinate resources first */
+    __fgds_release_gpu_memory_core(map);
 }
 
 static void force_release_gpu_memory(struct p2p_vmap* map)
 {
-    struct gpu_region* gd = (struct gpu_region*) map->data;
+    if (!map)
+        return;
 
+    printk("in fgds-mem.c: force_release_gpu_memory, Nvidia driver forcefully reclaimed %lu GPU pages\n", map->n_addrs);
 
-    if (gd != NULL)
-    {
-
-        if (gd->pages != NULL)
-        {
-            nvfs_nvidia_p2p_put_pages(0, 0, map->gpuvaddr, gd->pages);
-        }
-
-        kfree(gd);
-        map->data = NULL;
-
-        printk("Nvidia driver forcefully reclaimed %lu GPU pages\n", map->n_addrs);
-    	
-	}
-	unmap_and_release(map);
+    /*
+     * NVIDIA 驱动通过 free_callback 回调到这里，通知我们这段 P2P
+     * 映射需要被强制回收。
+     */
+    __fgds_release_gpu_memory_core(map);
 }
 
 fgds_mmap_buffer_t fgds_check_and_bind_phony_buffer(u64 cpuvaddr, u64 length) {
     fgds_mmap_buffer_t mbuffer = NULL;
-    struct mm_struct *mm = current->mm; 
-    struct vm_area_struct *vma; 
+    struct mm_struct *mm = current->mm;
+    struct vm_area_struct *vma;
 
-    if (!cpuvaddr) { 
+    if (!cpuvaddr) {
         printk("fgds_check_and_bind_phony_buffer get cpuvaddr error");
-        goto out; 
-    } 
+        goto out;
+    }
 
-    if (cpuvaddr % PAGE_SIZE) { 
+    if (cpuvaddr % PAGE_SIZE) {
         printk("fgds_check_and_bind_phony_buffer cpuvaddr not aligned");
-        goto out; 
-    } 
+        goto out;
+    }
 
-    vma = find_vma(mm, cpuvaddr); 
+    vma = vma_lookup(mm, cpuvaddr);
     if (vma == NULL)
-        goto out; 
-        
+        goto out;
+
 
     mbuffer = (fgds_mmap_buffer_t)vma->vm_private_data;
-    if (mbuffer!= NULL) { 
-        if (mbuffer->c_vaddr!= cpuvaddr || mbuffer->map_len!= length) { 
-            printk("reg region is not same as mmap region"); 
-            goto out; 
-        } else { 
-            return mbuffer; 
-        } 
-    } else { 
+    if (mbuffer!= NULL) {
+        if (mbuffer->c_vaddr!= cpuvaddr || mbuffer->map_len!= length) {
+            printk("reg region is not same as mmap region");
+            goto out;
+        } else {
+            return mbuffer;
+        }
+    } else {
         printk("vma found, ·but mbuffer is none!\n");
-        goto out; 
-    } 
+        goto out;
+    }
 
-out: 
-    return NULL; 
+out:
+    return NULL;
 } 
 
 /**
@@ -162,12 +170,18 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
     }
 
     mbuffer->ppages = (struct page **) kmalloc(mbuffer->host_page_num * sizeof(struct page *), GFP_KERNEL);
+    if (mbuffer->ppages == NULL)
+    {
+        ret = -ENOMEM;
+        goto out;
+    }
 
     mbuffer->map = kmalloc(sizeof(struct p2p_vmap) + (nr_dev_pages - 1) * sizeof(uint64_t), GFP_KERNEL);
     if (mbuffer->map == NULL)
     {
         printk("Failed to allocate mapping descriptor\n");
-        return -ENOMEM;
+        ret = -ENOMEM;
+        goto out;
     }
 
     // save the information of the mapping descriptor
@@ -184,10 +198,6 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
     gd = kmalloc(sizeof(struct gpu_region), GFP_KERNEL);
     if (gd == NULL)
     {
-        if(mbuffer->map!=NULL)
-        {
-            kfree(mbuffer->map);
-        }
         printk("Failed to allocate mapping descriptor\n");
         ret = -ENOMEM;
         goto out;
@@ -221,16 +231,23 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
     for (i = 0; i < nr_dev_pages; i++) {
         pci_bar_off = dev_page_addrs[i] - mbuffer->dev->paddr;
         cpu_vaddr = (uint64_t)(mbuffer->dev->pci_mem_va + pci_bar_off);
+
+        // Validate pci_bar_off to prevent out-of-bounds access
+        if (pci_bar_off < 0 || pci_bar_off > (dev->size - GPU_PAGE_SIZE)) {
+            printk("Invalid pci_bar_off: 0x%llx, dev_size: 0x%llx\n", pci_bar_off, dev->size);
+            ret = -EINVAL;
+            goto out;
+        }
+
         for (j = 0; j < mbuffer->subpage_num; j++) {
             mbuffer->ppages[i * mbuffer->subpage_num + j] = virt_to_page(cpu_vaddr + j * PAGE_SIZE);
         }
     }
-    
+
     // establish the mapping between the GPU memory region and the host memory region via vm_insert_pages
     ret = vm_insert_pages(vma, mbuffer->c_vaddr, mbuffer->ppages, &total_pages);
-    
-    if (ret && total_pages) {
-        printk("vm_insert_pages failed\n");
+    if (ret) {
+        printk("vm_insert_pages failed, ret=%d, total_pages=%lu\n", ret, total_pages);
         goto out;
     }
     mbuffer->remap = 1;
@@ -239,13 +256,16 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
 out:
     if (gd != NULL)
         kfree(gd);
+        gd = NULL;
     if (mbuffer->map != NULL)
         kfree(mbuffer->map);
+        mbuffer->map = NULL;
     if (mbuffer->ppages != NULL)
         kfree(mbuffer->ppages);
+        mbuffer->ppages = NULL;
     if (dev_page_addrs != NULL)
         kfree(dev_page_addrs);
-    
+        dev_page_addrs = NULL;
     return ret;
 }
 
@@ -273,6 +293,7 @@ int fgds_map_dev_addr(fgds_ioctl_map_t *map_param, u64 devaddr, u64 dev_len, u64
         mbuffer->dev_len = dev_len;
         // map the GPU virtual address to the virtual address space created by mmap
         ret = fgds_map_dev_addr_inner(mbuffer, devaddr, dev_len);
+        printk("fgds_map_dev_addr_inner done, ret: %d\n", ret);
         return ret;
     }
 }
@@ -290,6 +311,10 @@ void fgds_map_dev_release(fgds_ioctl_map_t *map_param, u64 devaddr, u64 dev_len,
     fgds_mmap_buffer_t mbuffer;
     // query the mmap buffer from the hash table using the user-space virtual address
     mbuffer = fgds_check_and_bind_phony_buffer(cpuvaddr, length);
+    if (mbuffer == NULL) {
+        printk("fgds_map_dev_release: mbuffer not found for cpuvaddr=0x%llx, length=0x%llx\n", cpuvaddr, length);
+        return;
+    }
     // put the mmap buffer and delete the mapping descriptor
     fgds_mbuffer_put(mbuffer);
 }
@@ -298,21 +323,27 @@ static void fgds_mbuffer_free(fgds_mmap_buffer_t mbuffer) {
     spin_lock(&lock);
     hash_del_rcu(&mbuffer->hash_link);
     spin_unlock(&lock);
-    
+
     if (mbuffer->remap) {
         release_gpu_memory(mbuffer->map);
+        mbuffer->map = NULL;
+        mbuffer->remap = 0;
     }
 
     if (mbuffer->dev_page_addrs != NULL) {
         kfree(mbuffer->dev_page_addrs);
+        mbuffer->dev_page_addrs = NULL;
     }
     if (mbuffer->ppages != NULL) {
         kfree(mbuffer->ppages);
+        mbuffer->ppages = NULL;
     }
-    
+
     mbuffer->dev = NULL;
     mbuffer->vma = NULL;
     mbuffer->base_index = 0;
+    mbuffer->n_vaddr = 0;
+    mbuffer->dev_len = 0;
 }
 
 void fgds_mbuffer_init(void) {

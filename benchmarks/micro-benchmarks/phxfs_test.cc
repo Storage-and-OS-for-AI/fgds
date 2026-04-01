@@ -9,8 +9,8 @@
 #include <unistd.h>
 #include <libaio.h>
 
-#include "fgds_utils.h"
-#include "fgds.h"
+#include "phxfs_utils.h"
+#include "phoenix.h"
 
 
 // todo: time of async single I/O  
@@ -18,9 +18,9 @@ static void *async_thread(void *arg) {
     struct timespec io_start, io_end;
     struct io_uring_sqe *sqe;
     struct io_uring_cqe *cqe;
-    fgds_xfer_addr *xfer_addr = NULL;
+    phxfs_xfer_addr *xfer_addr = NULL;
     ThreadData *data = (ThreadData *)arg;
-    fgds_fileid_t fid = (fgds_fileid_t){
+    phxfs_fileid_t fid = (phxfs_fileid_t){
         .fd = data->fd,
         .deviceID = data->device_id
     };
@@ -62,11 +62,11 @@ static void *async_thread(void *arg) {
                 return NULL;
             }
             // 针对GPU地址进行转换
-            xfer_addr = fgds_do_xfer_addr(fid.deviceID, data->gpu_buffer,
+            xfer_addr = phxfs_do_xfer_addr(fid.deviceID, data->gpu_buffer,
                                         chunk_done_size + i * data->io_size,
                                         data->io_size);
             if (xfer_addr == NULL){
-                pr_error("fgds_xfer_addr error");
+                pr_error("phxfs_xfer_addr error");
                 return NULL;
             }
             internal_bytes = 0;
@@ -81,7 +81,7 @@ static void *async_thread(void *arg) {
             }
 
             if (internal_bytes != data->io_size){
-                pr_error("fgds_xfer_addr faild");
+                pr_error("phxfs_xfer_addr faild");
             }
             io_uring_submit(data->ring);
         }
@@ -115,7 +115,7 @@ static void *async_thread_stream(void *arg) {
     cudaError_t status;
     struct timespec io_start, io_end;
     ThreadData *data = (ThreadData *)arg;
-    fgds_fileid_t fid = (fgds_fileid_t){
+    phxfs_fileid_t fid = (phxfs_fileid_t){
         .fd = data->fd,
         .deviceID = data->device_id
     };
@@ -136,13 +136,13 @@ static void *async_thread_stream(void *arg) {
     cudaStream_t stream;
     check_cudaruntimecall(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-    cudaError_t (*fgdsRW)(fgds_fileid_t fid,
+    cudaError_t (*phxfsRW)(phxfs_fileid_t fid,
         void* buf,
         size_t nbytes, off_t offset,
         ssize_t *bytes_done,
         CUstream stream);
 
-    fgdsRW = (data->mode == 0) ? fgds_read_async: fgds_write_async;
+    phxfsRW = (data->mode == 0) ? phxfs_read_async: phxfs_write_async;
 
     pr_info(__func__);
     
@@ -165,7 +165,7 @@ static void *async_thread_stream(void *arg) {
             }
 
             for (size_t i = 0; i < data->depth; i++) {
-                status = fgdsRW(fid, io_args[i].devPtr, io_args[i].io_size,
+                status = phxfsRW(fid, io_args[i].devPtr, io_args[i].io_size,
                                 io_args[i].f_offset,
                                 &io_args[i].bytes_done, stream);
                 if (status != cudaSuccess) {
@@ -203,9 +203,9 @@ static void *batch_thread(void *arg) {
     struct timespec io_start, io_end;
     struct io_uring_sqe *sqe;
     struct io_uring_cqe *cqe;
-    fgds_xfer_addr *xfer_addr = NULL;
+    phxfs_xfer_addr *xfer_addr = NULL;
     ThreadData *data = (ThreadData *)arg;
-    fgds_fileid_t fid = (fgds_fileid_t){
+    phxfs_fileid_t fid = (phxfs_fileid_t){
         .fd = data->fd,
         .deviceID = data->device_id
     };
@@ -239,7 +239,7 @@ static void *batch_thread(void *arg) {
                 return NULL;
             }
             // 针对GPU地址进行转换
-            xfer_addr = fgds_do_xfer_addr(fid.deviceID, data->gpu_buffer,
+            xfer_addr = phxfs_do_xfer_addr(fid.deviceID, data->gpu_buffer,
                                         chuck_done_size + i * chuck_size,
                                         data->io_size);
             internal_bytes = 0;
@@ -255,7 +255,7 @@ static void *batch_thread(void *arg) {
             }
 
             if (internal_bytes != data->io_size){
-                pr_error("fgds_xfer_addr faild");
+                pr_error("phxfs_xfer_addr faild");
             }
         }
         pending = i;
@@ -285,12 +285,12 @@ static void *batch_thread(void *arg) {
 static void *sync_write_thread(void *arg){
     struct timespec io_start, io_end;
     u64 io_time = 0;
-    fgds_fileid_t fid;
+    phxfs_fileid_t fid;
     ThreadData *data = (ThreadData *)arg;
     ssize_t io_size = (ssize_t)data->io_size;
     size_t done_bytes = 0;
 
-    fid = (fgds_fileid_t){
+    fid = (phxfs_fileid_t){
         .fd = data->fd,
         .deviceID = data->device_id
     };
@@ -300,15 +300,15 @@ static void *sync_write_thread(void *arg){
     
     while (done_bytes < data->size) {
         clock_gettime(CLOCK_MONOTONIC, &io_start);
-        ssize_t result = fgds_write(fid, data->gpu_buffer, done_bytes, 
+        ssize_t result = phxfs_write(fid, data->gpu_buffer, done_bytes, 
                                     data->io_size, data->offset + done_bytes);
-        if (result == 0) {
-            // End of file reached
-            break;
-        }
         if (result != io_size) {
             pr_error("read_thread error");
             return NULL;
+        }
+        if (result == 0) {
+            // End of file reached
+            break;
         }
         clock_gettime(CLOCK_MONOTONIC, &io_end);
         io_time = (io_end.tv_sec - io_start.tv_sec) * 1000000000LL + (io_end.tv_nsec - io_start.tv_nsec);
@@ -323,7 +323,7 @@ static void *sync_write_thread(void *arg){
 
 
 static void *sync_read_thread(void *arg){
-    fgds_fileid_t fid;
+    phxfs_fileid_t fid;
     struct timespec io_start, io_end;
     ThreadData *data = (ThreadData *)arg;
     ssize_t io_size = (ssize_t)data->io_size;
@@ -331,7 +331,7 @@ static void *sync_read_thread(void *arg){
     u64 io_time = 0;
     int repeated = 1;
 
-    fid = (fgds_fileid_t){
+    fid = (phxfs_fileid_t){
         .fd = data->fd,
         .deviceID = data->device_id
     };
@@ -339,6 +339,7 @@ static void *sync_read_thread(void *arg){
     repeated = data->size / data->io_size;
     if (data->size / data->io_size < 1000){
         repeated = 1000 / (data->size / data->io_size) + 1;
+        printf("repeated is %d\n", repeated);
     } else {
         repeated = 1;
     }
@@ -348,15 +349,15 @@ static void *sync_read_thread(void *arg){
         done_bytes = 0;
         while (done_bytes < data->size) {
             clock_gettime(CLOCK_MONOTONIC, &io_start);
-            ssize_t result = fgds_read(fid, data->gpu_buffer, 
-                done_bytes, data->io_size, data->offset + done_bytes);
-            if (result == 0) {
-                // End of file reached
-                break;
-            }
+            ssize_t result = phxfs_read(fid, data->gpu_buffer, 
+                0, data->io_size, data->offset + done_bytes);
             if (result != io_size) {
                 printf("read_thread error, result is %lu, size is %lu\n",result, data->io_size);
                 return NULL;
+            }
+            if (result == 0) {
+                // End of file reached
+                break;
             }
             clock_gettime(CLOCK_MONOTONIC, &io_end);
             io_time = (io_end.tv_sec - io_start.tv_sec) * 1000000000LL + (io_end.tv_nsec - io_start.tv_nsec);;
@@ -371,11 +372,11 @@ static void *sync_read_thread(void *arg){
 }
 
 
-int run_fgds(GDSOpts opts){
+int run_phxfs(GDSOpts opts){
     struct timespec prog_start, prog_end;
     GDSThread *threads;
     size_t chunk_size;
-    fgds_fileid_t fid;
+    phxfs_fileid_t fid;
     std::vector<uint64_t> latency_vec;
     uint64_t total_io_operations = 0, total_io_time = 0;
     double average_io_latency, average_io_bandwidth;
@@ -402,14 +403,14 @@ int run_fgds(GDSOpts opts){
 
     check_cudaruntimecall(cudaSetDevice(device));
 
-    ret = fgds_open(opts.gpu_id);
+    ret = phxfs_open(opts.gpu_id);
 
     if (ret != 0) {
-        pr_error("fgds init failed: " << ret);
+        pr_error("phxfs init failed: " << ret);
         return 1;
     }
 
-    fid = (fgds_fileid_t){
+    fid = (phxfs_fileid_t){
         .fd = file_fd,
         .deviceID = opts.gpu_id
     };
@@ -435,7 +436,7 @@ int run_fgds(GDSOpts opts){
         check_cudaruntimecall(cudaMemset(data->gpu_buffer, 0x00, data->size));
         check_cudaruntimecall(cudaStreamSynchronize(0));
 
-        ret = fgds_regmem(fid.deviceID, data->gpu_buffer, data->size, &data->buffer);
+        ret = phxfs_regmem(fid.deviceID, data->gpu_buffer, data->size, &data->buffer);
         if (ret != 0) {
             data->buffer = NULL;
             pr_error("buffer alloc error");
@@ -470,7 +471,7 @@ int run_fgds(GDSOpts opts){
         data->latency_vec.reserve(data->size / data->io_size + 10);
 
         if (ret){
-            pr_error("fgds regmem failed: " << ret);
+            pr_error("phxfs regmem failed: " << ret);
             goto out;
         }
     }
@@ -497,22 +498,21 @@ int run_fgds(GDSOpts opts){
     pr_info("Total IO operations: " << total_io_operations);
     average_io_bandwidth = (((double)total_io_operations * opts.io_size * opts.io_depth)/(MB) ) / (1.0 * prog_time / 1000000000.0);
     pr_info("Average IO bandwidth: " << average_io_bandwidth << " MB/s");
-    if (total_io_operations != 0) {
-        average_io_latency = (double)total_io_time / (total_io_operations * 1000.0);
-        pr_info("Average IO latency: " << average_io_latency << " us");
-    }
+    average_io_latency = (double)total_io_time / (total_io_operations * 1000.0);
+    pr_info("Average IO latency: " << average_io_latency << " us");
     get_percentile(latency_vec);
 
     for (int i =0 ;i < opts.num_threads; i++){
-        ret = fgds_deregmem(fid.deviceID, threads[i].data.gpu_buffer, threads[i].data.size);
+        ret = phxfs_deregmem(fid.deviceID, threads[i].data.gpu_buffer, threads[i].data.size);
         if (ret){
-            pr_error("fgds regmem failed: " << ret);
+            pr_error("phxfs regmem failed: " << ret);
             return -1;
         }
         check_cudaruntimecall(cudaFree(threads[i].data.gpu_buffer));
     }
+
 out: 
-    fgds_close(fid.deviceID);
+    phxfs_close(fid.deviceID);
     close(file_fd);
 
     return 0;

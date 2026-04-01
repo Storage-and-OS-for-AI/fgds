@@ -1,3 +1,6 @@
+/*
+ * This file was modified by KylinSoft. Co., Ltd. on 2026
+ */
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -15,7 +18,7 @@
 
 #define HUGE_PAGE_SIZE (64 * 1024)
 #define SMALL_PAGE_SIZE (4 * 1024)
-#define MMAP_LIMIT (1024 * 1024 * 1024) // 1MB
+#define MMAP_LIMIT (1024 * 1024 * 1024)
 #define FGDS_MAX_DEVICES 8
 #define QD 128
 
@@ -218,9 +221,9 @@ static inline int __fgds_regmem(fgds_mmap_buffer_t *mbuffer, u64 n_addr, u64 c_a
 }
 
 int fgds_regmem(int device_id, const void *addr, size_t len, void **target_addr) {
-    size_t i, ret = 0;
+    int i, ret = 0;
     unsigned long mmaped_len;
-    
+    size_t mmap_len;
     fgds_mmap_buffer_t *pb = &mbuffer[device_id];
     fgds_p2p_map_t *p2p_map = (fgds_p2p_map_t *)malloc(sizeof(fgds_p2p_map_t));
     if (!p2p_map) {
@@ -249,71 +252,46 @@ int fgds_regmem(int device_id, const void *addr, size_t len, void **target_addr)
     p2p_map->vaddrs = (void **)malloc(p2p_map->mmap_count * sizeof(void *));
     if (p2p_map->vaddrs == NULL) {
         fprintf(stderr, "%s: p2p_map->vaddrs malloc fail\n", __func__);
+        free(p2p_map);
         return -1;
     }
 
     p2p_map->n_addr = (u64)addr;
     mmaped_len = 0;
-    
-    for(i = 0; i < p2p_map->mmap_count; i++) {
+
+    for(i = 0; i < (int)p2p_map->mmap_count; i++) {
         p2p_map->vaddrs[i] = NULL;
-        if (i == (p2p_map->mmap_count - 1)) {
-            // printf("fgds_regmem 1\n ");
-            if (p2p_map->length_left) {
-                p2p_map->vaddrs[i] = mmap(p2p_map->vaddrs[i],
-                                        p2p_map->length_left,
-                                        PROT_READ|PROT_WRITE,
-                                        MAP_SHARED,
-                                        pb->bdev_fd,
-                                        0);
-                if ((u64)p2p_map->vaddrs[i] == 0xffffffffffffffff) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs mmap fail\n", __func__);
-                    return -EFAULT;
-                }
-                // printf("fgds_regmem 2\n ");
-                ret = __fgds_regmem(pb, (u64)p2p_map->n_addr + mmaped_len, (u64)p2p_map->vaddrs[i], p2p_map->length_left);
-                if (ret) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs _fgds_regmem fail\n", __func__);
-                    return -EFAULT;
-                }
-                mmaped_len += p2p_map->length_left;
-                // printf("fgds_regmem 3\n ");
-            } else {
-                p2p_map->vaddrs[i] = mmap(p2p_map->vaddrs[i],
-                                        MMAP_LIMIT,
-                                        PROT_READ|PROT_WRITE,
-                                        MAP_SHARED,
-                                        pb->bdev_fd,
-                                        0);
-                if((u64)p2p_map->vaddrs[i] == 0xffffffffffffffff) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs mmap fail\n", __func__);
-                    return -EFAULT;
-                }
-                ret = __fgds_regmem(pb, (u64)p2p_map->n_addr+mmaped_len, (u64)p2p_map->vaddrs[i], MMAP_LIMIT);
-                if(ret) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs _fgds_regmem fail\n", __func__);
-                    return -EFAULT;
-                }
-                mmaped_len += MMAP_LIMIT;
+        mmap_len = (i == ((int)p2p_map->mmap_count - 1) && p2p_map->length_left) ?
+                   p2p_map->length_left : MMAP_LIMIT;
+
+        p2p_map->vaddrs[i] = mmap(NULL, mmap_len, PROT_READ|PROT_WRITE, MAP_SHARED, pb->bdev_fd, 0);
+        if (p2p_map->vaddrs[i] == MAP_FAILED) {
+            fprintf(stderr, "%s: p2p_map->vaddrs mmap fail, errno=%d\n", __func__, errno);
+            // Cleanup: munmap already mapped regions
+            for (int j = 0; j < i; j++) {
+                size_t cleanup_len = (j == ((int)p2p_map->mmap_count - 1) && p2p_map->length_left) ?
+                                   p2p_map->length_left : MMAP_LIMIT;
+                munmap(p2p_map->vaddrs[j], cleanup_len);
             }
-        } else {
-            p2p_map->vaddrs[i] = mmap(p2p_map->vaddrs[i],
-                                    MMAP_LIMIT,
-                                    PROT_READ|PROT_WRITE,
-                                    MAP_SHARED,
-                                    pb->bdev_fd,
-                                    0);
-            if ((u64)p2p_map->vaddrs[i] == 0xffffffffffffffff) {
-                fprintf(stderr, "%s: p2p_map->vaddrs mmap fail\n", __func__);
-                return -EFAULT;
-            }
-            ret = __fgds_regmem(pb, (u64)p2p_map->n_addr+mmaped_len, (u64)p2p_map->vaddrs[i], MMAP_LIMIT);
-            if (ret) {
-                fprintf(stderr, "%s: p2p_map->vaddrs _fgds_regmem fail\n", __func__);
-                return -EFAULT;
-            }
-            mmaped_len += MMAP_LIMIT;
+            free(p2p_map->vaddrs);
+            free(p2p_map);
+            return -EFAULT;
         }
+
+        ret = __fgds_regmem(pb, (u64)p2p_map->n_addr + mmaped_len, (u64)p2p_map->vaddrs[i], mmap_len);
+        if (ret) {
+            fprintf(stderr, "%s: p2p_map->vaddrs _fgds_regmem fail\n", __func__);
+            // Cleanup: munmap all mapped regions including current
+            for (int j = 0; j <= i; j++) {
+                size_t cleanup_len = (j == ((int)p2p_map->mmap_count - 1) && p2p_map->length_left) ?
+                                   p2p_map->length_left : MMAP_LIMIT;
+                munmap(p2p_map->vaddrs[j], cleanup_len);
+            }
+            free(p2p_map->vaddrs);
+            free(p2p_map);
+            return -EFAULT;
+        }
+        mmaped_len += mmap_len;
     }
     p2p_map->has_reg = 1;
     insert_fgds_mmap_node(pb, p2p_map);
@@ -367,45 +345,27 @@ int fgds_deregmem(int device_id, const void *addr, size_t len) {
     }
 
     unmapped_len = 0;
+    ret = 0; // Initialize ret to 0
     for(i = 0; i < p2p_map->mmap_count; i++) {
-        if(i == (p2p_map->mmap_count - 1)) {
-            if(p2p_map->length_left) {
-                ret = __fgds_deregmem(pb, (u64)p2p_map->n_addr + unmapped_len, (u64)p2p_map->vaddrs[i], p2p_map->length_left);
-                if(ret) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs _fgds_unregmem fail\n", __func__);
-                    return -1;
-                }
-                unmapped_len += p2p_map->length_left;
-                ret = munmap(p2p_map->vaddrs[i], p2p_map->length_left);
-                if(ret) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs munmap fail\n", __func__);
-                    return -1;
-                }
-            } else {
-                ret = __fgds_deregmem(pb, (u64)p2p_map->n_addr + unmapped_len, (u64)p2p_map->vaddrs[i], MMAP_LIMIT);
-                if(ret) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs _fgds_unregmem fail\n", __func__);
-                    return -1;
-                }
-                unmapped_len += MMAP_LIMIT;
-                ret = munmap(p2p_map->vaddrs[i], MMAP_LIMIT);
-                if(ret) {
-                    fprintf(stderr, "%s: p2p_map->vaddrs munmap fail\n", __func__);
-                    return -1;
-                }
-            }
-        } else {
-            ret = __fgds_deregmem(pb, (u64)p2p_map->n_addr + unmapped_len, (u64)p2p_map->vaddrs[i], MMAP_LIMIT);
-            if(ret) {
-                fprintf(stderr, "%s: p2p_map->vaddrs _fgds_unregmem fail\n", __func__);
-                return -1;
-            }
-            unmapped_len += MMAP_LIMIT;
-            ret = munmap(p2p_map->vaddrs[i], MMAP_LIMIT);
-            if(ret) {
-                fprintf(stderr, "%s: p2p_map->vaddrs munmap fail\n", __func__);
-                return -1;
-            }
+        size_t cleanup_len = MMAP_LIMIT;
+        if(i == (p2p_map->mmap_count - 1) && p2p_map->length_left) {
+            cleanup_len = p2p_map->length_left;
+        }
+
+        // Try to deregmem first
+        int dereg_ret = __fgds_deregmem(pb, (u64)p2p_map->n_addr + unmapped_len, (u64)p2p_map->vaddrs[i], cleanup_len);
+        if(dereg_ret) {
+            fprintf(stderr, "%s: p2p_map->vaddrs _fgds_deregmem fail at index %zu, continuing cleanup\n", __func__, i);
+            ret = -1; // Set error flag but continue cleanup
+        }
+
+        unmapped_len += cleanup_len;
+
+        // Always try to munmap, even if deregmem failed, to avoid memory leaks
+        int munmap_ret = munmap(p2p_map->vaddrs[i], cleanup_len);
+        if(munmap_ret) {
+            fprintf(stderr, "%s: p2p_map->vaddrs munmap fail at index %zu, error: %s\n", __func__, i, strerror(errno));
+            ret = -1; // Set error flag but continue cleanup
         }
     }
 

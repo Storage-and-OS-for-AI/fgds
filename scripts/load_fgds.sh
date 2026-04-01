@@ -6,8 +6,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG="$ROOT_DIR/config.json"
-MODULE_DIR="$ROOT_DIR/build/module"
 MODULE_NAME="fgdsfs"
+INSTALL_DIR="/opt/fgds"
+
+if [ -d "$INSTALL_DIR/module" ]; then
+  MODULE_DIR="$INSTALL_DIR/module"
+else
+  MODULE_DIR="$ROOT_DIR/build/module"
+fi
+echo "MODULE_DIR: $MODULE_DIR"
 
 if [ ! -f "$CONFIG" ]; then
 	echo "config.json not found at $CONFIG"
@@ -30,8 +37,10 @@ PY
 MOD_PATH="$MODULE_DIR/${MODULE_NAME}.ko"
 if [ ! -f "$MOD_PATH" ]; then
 	echo "Module not found at $MOD_PATH, build the module first."
-	exit 1
+	cd $MODULE_DIR && make
+	[ $? -ne 0 ] && exit 1
 fi
 
+echo "MOD_PATH: $MOD_PATH"
 echo "Loading fgds with use_all_gpus=$use_all_gpus gpuids=$gpuids_param"
 sudo insmod "$MOD_PATH" use_all_gpus="$use_all_gpus" gpuids="$gpuids_param"

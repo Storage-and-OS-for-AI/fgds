@@ -1,3 +1,6 @@
+/*
+ * This file was modified by KylinSoft. Co., Ltd. on 2026
+ */
 #include <asm/page.h>
 #include <linux/cdev.h>
 #include <linux/ctype.h> //for isdigit()
@@ -42,7 +45,7 @@ struct cdev fgds_chr_dev;
 struct fgds_ctrl ctrl;
 
 #define NUM_THREADS 128
-#define MAX_GPUIDS 8 // 和用户态的限制FGDS_MAX_DEVICES保持一致
+#define MAX_GPUIDS 16
 
 u32 npu_num;
 extern uint64_t gpu_info_table[MAX_GPU_DEVS];
@@ -112,7 +115,10 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 	printk("npu->pgmap->res.start is %#llx, end is %#llx\n", pgmap->range.start,
 			pgmap->range.end);
 	pgmap->nr_range = 1;
-	pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
+	// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
+	// 用MEMORY_DEVICE_PCI_P2PDMA时，跑example和micro.py会异常重启。改成MEMORY_DEVICE_GENERIC能正常跑，相比传统方式的读写性能仍有20%+的提升。
+	// todo:理论上应用MEMORY_DEVICE_PCI_P2PDMA,待排查处理。 @pengkunlun。
+	pgmap->type = MEMORY_DEVICE_GENERIC;
 
 	// 把GPU的PCIE Bar地址映射到内核的ZONE_DEVICE类型的虚拟内存，让内核可以访问gpu bar地址，并分配page来管理bar地址,达到统一地址管理的效果，例如支持dma和用户空间mmap这块内核虚拟内存。
 	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
@@ -124,7 +130,7 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 		// 经验规则：devm_memremap_pages的pat冲突，一般是发生在bar的首地址。在x86架构下尝试分别跳过BAR前2MB和4MB进行探测。但不能跳过8MB，否则调用fgds时机器会异常重启。
 		printk("devm_memremap_pages fail! there is maybe a conflict in pat, should adjust the address mapping range of BAR.\n");
 
-		const int skip_sizes_mb[] = {2, 4};
+		const int skip_sizes_mb[] = {2, 4, 6};
 		const int num_attempts = sizeof(skip_sizes_mb) / sizeof(skip_sizes_mb[0]);
 		int attempt;
 
@@ -227,7 +233,7 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 			printk("npu%u: pci_get_domain_bus_and_slot failed\n", i);
 			return -1;
 		}
-		for (j = 0; j < PCI_NUM_RESOURCES; j++) {
+		for (j = 0; j < PCI_STD_NUM_BARS; j++) {
 			size = pci_resource_len(dev_ctrl->phx_dev[i].dev, j);
 			// 考虑打日志，输出每个bar区域的size和paddr
 			// printk("npu%u: bar%d size is 0x%llx, paddr is 0x%llx\n", i, j, size, pci_resource_start(dev_ctrl->phx_dev[i].dev, j));
@@ -344,11 +350,15 @@ void fgds_cdev_del(struct cdev *cdev, struct device *cdev_device,
 	cdev_device_del(cdev, cdev_device);
 	// unmap the remapped GPU device's BAR memory from the kernel space
 	if (dev->remap) {
-		devm_memunmap_pages(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
+		if (dev->p2p_pgmap != NULL) {
+			devm_memunmap_pages(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
+		}
 		dev->pci_mem_va = NULL;
+		dev->remap = 0;
 	}
 	if (dev->p2p_pgmap != NULL) {
 		devm_kfree(&dev->dev->dev, &dev->p2p_pgmap->pgmap);
+		dev->p2p_pgmap = NULL;
 	}
 	dev->dev = NULL;
 	//ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
@@ -408,8 +418,8 @@ int fgds_cdev_init(struct fgds_ctrl *ctrl) {
 		kfree_const(ctrl->phx_dev[i].device.kobj.name);
 		goto unregister_generic_fgds;
 		}
+		printk("fgds_cdev_init device:%d success!\n", i);
 	}
-	printk("fgds_cdev_init device:%d success!\n", i);
 	return 0;
 
 unregister_generic_fgds:

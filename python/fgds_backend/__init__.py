@@ -13,11 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-fgds-python - A basic Python wrapper for the fgds API
+LMCache Fgds Backend Package
 """
 
-__version__ = "0.1.2"
-
-from .fgds import Fgds, FgdsDriver
-
-__all__ = ["Fgds", "FgdsDriver"] 
+__all__ = ['FgdsBackend', 'FgdsMemoryAllocator']
+__version__ = '0.1.0'

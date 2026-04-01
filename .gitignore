@@ -14,3 +14,8 @@ sc25/logs/*
 build/
 *.so
 .idea/*
+python/build
+python/dist
+python/*.egg-info
+tmp-rpmbuild
+cmake-build-debug
