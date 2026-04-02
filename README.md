@@ -14,12 +14,26 @@ fgds
 
 ## How to Build
 
-### Environment
-* OS: Ubuntu 22.04.2 LTS
-* kernel: Linux 6.1.0-rc8
-* NVIDIA driver: 550.54
+### Soft Environment
+* OS: Ubuntu 22.04.2 LTS/KylinOS Server V11
+* kernel: Linux 6.1.0-rc8/6.6.0
+* NVIDIA driver: 550.54/570.124.06
 * OFED driver: 24.10
-* CUDA: 12.4
+* CUDA: 12.4/12.8
+* CMAKE: 3.18+
+* GCC: 12.0+
+
+### Hardware Environment
+* PCIe P2P DMA supported
+* GPU device and NVME SSD should be installed in the same PCIe root complex and not through expansion cards
+* Above 4G Decoding needs to be ENABLED in the BIOS
+* Disable ACS
+* IOMMU disabled
+  * The system's IOMMU should be disabled for ease of debugging
+    In Intel Systems, this requires disabling Vt-d in the BIOS
+    In AMD Systems, this requires disabling IOMMU in the BIOS
+    In ARM Systems, this requires disabling SMMU in the BIOS
+  * The iommu support in Linux must be disabled too.
 
 ### 1. NVIDIA GDS
 
