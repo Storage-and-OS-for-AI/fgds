@@ -1,5 +1,16 @@
-# Fgds is forked from [phoenix](https://github.com/nicexlab/phoenix), A Refactored I/O Stack for GPU Direct Storage without Phony Buffers.
-The phoenix has been accepted for [SC'25](https://doi.org/10.1145/3712285.3759862). This documentation explains how to build, configure and use this I/O stack.
+## Abstract
+fgds is a fork of [phoenix](https://github.com/nicexlab/phoenix), a refactored I/O stack for GPU Direct Storage without phony buffers. fgds extends phoenix with the following key enhancements:
+
+* **Enhanced Availability**: Fixed kernel module loading failures caused by BAR address conflicts and memory manager bugs
+* **Improved Compatibility**: Added support for both x86 and ARM environments, adapted to kernel 6.6, and enabled multi-GPU scenarios with specified GPU lists
+* **Ecosystem Integrations**:
+  * Added support for kvcache offloading through vllm lmcache backend, significantly boosting vllm token throughput compared to GDS
+  * Integrated fastsafetensors for accelerated model loading, substantially reducing Qwen-32B model loading latency on H20 GPU compared to GDS
+  * Implemented the PyTorch API of fgds and optimizing the performance of checkpoint save and load 
+
+The phoenix has been accepted for [SC'25](https://doi.org/10.1145/3712285.3759862). 
+
+This documentation explains how to build, configure and use this I/O stack.
 
 ## Directory structure
 ```
