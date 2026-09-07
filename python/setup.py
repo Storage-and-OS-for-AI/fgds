@@ -28,7 +28,7 @@ setup(
     description='External logging backend implementation for LMCache',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/Storage-and-OS-for-AI/fgds',
+    url='https://atomgit.com/openeuler/fgds',
     classifiers=[
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.10',
