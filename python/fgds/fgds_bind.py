@@ -18,14 +18,10 @@ limitations under the License.
 """
 
 import ctypes
-import os
 
-ctypes.CDLL("libcudart.so", mode=ctypes.RTLD_GLOBAL)
-ctypes.CDLL("libcuda.so", mode=ctypes.RTLD_GLOBAL)
 ctypes.CDLL("libfgds.so", mode=ctypes.RTLD_GLOBAL)
 
 libfgds = ctypes.CDLL("libfgds.so")
-cuda = ctypes.CDLL("libcuda.so")
 
 class fgds_fileid_t(ctypes.Structure):
     _fields_ = [("fd", ctypes.c_int), ("deviceID", ctypes.c_int)]
@@ -36,8 +32,6 @@ MAX_NR_ADDR = 4
 class fgds_xfer_addr(ctypes.Structure):
     _fields_ = [("nr_xfer_addrs", ctypes.c_uint32), ("x_addrs", xfer_addr*1)]
 
-cudaError_t = ctypes.c_int
-
 libfgds.fgds_open.restype                   = ctypes.c_int
 libfgds.fgds_close.restype                  = ctypes.c_int
 libfgds.fgds_read.restype                   = ctypes.c_ssize_t
@@ -45,10 +39,6 @@ libfgds.fgds_write.restype                  = ctypes.c_ssize_t
 libfgds.fgds_do_xfer_addr.restype           = ctypes.POINTER(fgds_xfer_addr)
 libfgds.fgds_regmem.restype                 = ctypes.c_int
 libfgds.fgds_deregmem.restype               = ctypes.c_int
-libfgds.fgds_read_async.restype             = cudaError_t
-libfgds.fgds_write_async.restype            = cudaError_t
-
-CUstream = ctypes.c_void_p
 
 libfgds.fgds_open.argtypes = [ctypes.c_int]
 libfgds.fgds_close.argtypes = [ctypes.c_int]
@@ -57,8 +47,6 @@ libfgds.fgds_write.argtypes = [fgds_fileid_t, ctypes.c_void_p, ctypes.c_longlong
 libfgds.fgds_do_xfer_addr.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_longlong, ctypes.c_size_t]
 libfgds.fgds_regmem.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)]
 libfgds.fgds_deregmem.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t]
-libfgds.fgds_read_async.argtypes = [fgds_fileid_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_longlong, ctypes.POINTER(ctypes.c_ssize_t), CUstream]
-libfgds.fgds_write_async.argtypes = [fgds_fileid_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_longlong, ctypes.POINTER(ctypes.c_ssize_t), CUstream]
 
 def _check_ret(ret, name):
     if ret < 0:
@@ -99,9 +87,3 @@ def fgds_deregmem(device_id: ctypes.c_int, addr: ctypes.c_void_p, len: ctypes.c_
     if ret < 0:
         raise RuntimeError(f"fgds_deregmem failed with return code: {ret}")
     return ret
-
-def fgds_read_async(fid: fgds_fileid_t, buf: ctypes.c_void_p, nbytes: ctypes.c_size_t, offset: ctypes.c_longlong, bytes_done: ctypes.c_ssize_t, stream: CUstream) -> cudaError_t:
-    return libfgds.fgds_read_async(fid, buf, nbytes, offset, bytes_done, stream)
-
-def fgds_write_async(fid: fgds_fileid_t, buf: ctypes.c_void_p, nbytes: ctypes.c_size_t, offset: ctypes.c_longlong, bytes_done: ctypes.c_ssize_t, stream: CUstream) -> cudaError_t:
-    return libfgds.fgds_write_async(fid, buf, nbytes, offset, bytes_done, stream)
