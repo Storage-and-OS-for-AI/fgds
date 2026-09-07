@@ -1,7 +1,5 @@
 # FGDS：Fast GPUDirect Storage
 
-[English](../README.md) | 中文
-
 FGDS 是对 GDS 的优化替代方案，具备更高性能、更易部署、更好的应用兼容性。[GDS](https://docs.nvidia.com/gpudirect-storage/)（GPUDirect Storage）是 NVIDIA 推出的技术，可在存储设备（如高速 NVMe SSD）与 GPU 显存之间提供直接数据通路。
 
 基于 [Phoenix](https://github.com/nicexlab/phoenix) 的 commit [`798208d`](https://github.com/nicexlab/phoenix/tree/798208d720b234954fef433b306a485093350e2a) 进行修改，FGDS 经过了大量优化与问题修复，目前仍在积极开发中。欢迎使用并反馈——我们会及时响应，也欢迎任何形式的贡献。

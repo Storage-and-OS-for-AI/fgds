@@ -1,7 +1,5 @@
 # FGDS:Fast GPUDirect Storage
 
-English | [中文](./docs/README_CN.md)
-
 FGDS is an optimized alternative to GDS, featuring higher performance, easier deployment, and better application compatibility. [GDS](https://docs.nvidia.com/gpudirect-storage/) (GPUDirect Storage) is a technology developed by NVIDIA that provides a direct data path between storage devices (like high-speed NVMe SSDs) and GPU memory.
 
 Cloned from [Phoenix](https://github.com/nicexlab/phoenix) at commit [`798208d`](https://github.com/nicexlab/phoenix/tree/798208d720b234954fef433b306a485093350e2a), FGDS has undergone extensive optimizations and bug fixes, and is under active development. Welcome to use it and share your feedback—we will respond promptly, and contributions of any kind are welcome.
@@ -104,7 +102,6 @@ Before the disk bandwidth is saturated, the read/write performance comparison is
 
 ## News
 
-- **2026-07-28** — Open-sourced to the openEuler community
 - **2026-06-03** — Significantly improved read/write performance with io_uring
 - **2026-04-21** — Fixed a resource leak bug and performed some code optimizations
 - **2026-03-11** — Added PyTorch FGDS API as a drop-in replacement for PyTorch GDS API in scenarios such as checkpoint saving
