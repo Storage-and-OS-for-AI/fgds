@@ -18,7 +18,6 @@ limitations under the License.
 """
 
 # Standard
-import copy
 from collections import OrderedDict
 from concurrent.futures import Future
 from typing import Any, List, Optional, Sequence, Tuple, Union
@@ -66,7 +65,7 @@ class FgdsMemoryAllocator(GPUMemoryAllocator):
         # HACK(Jiayi): cufile import is buggy on some hardware
         # (e.g., without GPUDirect), so it's temporarily put here.
         # Third Party
-        from fgds import fgds_regmem, fgds_deregmem
+        from fgds.fgds_bind import fgds_regmem, fgds_deregmem
 
         self.fgdsBufDeReg = fgds_deregmem
         if device is None:
@@ -83,8 +82,7 @@ class FgdsMemoryAllocator(GPUMemoryAllocator):
         print(f"FgdsMemoryAllocator, device={self.device}")
         self.base_pointer = self.tensor.data_ptr()
         void_ptr = ctypes.c_void_p()
-        host_ptr = ctypes.POINTER(ctypes.c_void_p)(void_ptr)
-        fgds_regmem(self.device, ctypes.c_void_p(self.base_pointer), ctypes.c_size_t(self.size), host_ptr)
+        fgds_regmem(self.device, ctypes.c_void_p(self.base_pointer), ctypes.c_size_t(self.size), ctypes.byref(void_ptr))
         self.host_ptr = void_ptr
 
     def __del__(self):
@@ -329,6 +327,12 @@ class FgdsBackend(AllocatorBackendInterface):
         else:
             logger.info("No base pointer found, cufile will use bounce buffers")
             self.fgds_base_pointer = None
+
+        if self.loop is None:
+            raise RuntimeError(
+                "FgdsBackend requires an event loop for background metadata "
+                "scanning."
+            )
         asyncio.run_coroutine_threadsafe(self._scan_metadata(), self.loop)
         self.save_metadata_tasks: set[asyncio.Task] = set()
 
@@ -527,7 +531,6 @@ class FgdsBackend(AllocatorBackendInterface):
             f"to {path} with metadata {metadata}")
 
         self.insert_key(key, memory_obj)
-        entry = self.metadata_cache.get(key)
         memory_obj.ref_count_down()
 
         task = asyncio.create_task(
@@ -589,10 +592,10 @@ class FgdsBackend(AllocatorBackendInterface):
     ) -> Optional[MemoryObj]:
         with self.metadata_cache_lock:
             entry = self.metadata_cache.get(key)
-            entry.fmt = MemoryFormat.KV_2LTD
         if entry is None:
             return None
 
+        entry.fmt = MemoryFormat.KV_2LTD
         path = entry.path
         dtype = entry.dtype
         shape = entry.shape
@@ -682,7 +685,6 @@ class FgdsBackend(AllocatorBackendInterface):
         metadata = pack_metadata(
             kv_chunk, fmt=fmt, lmcache_version=str(_METADATA_VERSION)
         )
-        tmp_meta = copy.deepcopy(metadata)
         try:
             with open(tmp_path, "wb") as f:
                 f.write(metadata)

@@ -18,7 +18,6 @@ limitations under the License.
 """
 
 import ctypes
-import os
 
 ctypes.CDLL("libcudart.so", mode=ctypes.RTLD_GLOBAL)
 ctypes.CDLL("libcuda.so", mode=ctypes.RTLD_GLOBAL)
