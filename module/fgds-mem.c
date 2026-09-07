@@ -478,7 +478,6 @@ error:
  *         On failure, a negative error code is returned.
  */
 int fgds_mmap(struct file *filp, struct vm_area_struct *vma) {
-    int ret;
     struct mm_struct *mm = current->mm;
 
     // set the vma flags for the memory mapping
@@ -496,15 +495,8 @@ int fgds_mmap(struct file *filp, struct vm_area_struct *vma) {
     vm_flags |= mm->def_flags;
     vm_flags_set(vma, vm_flags);
 #endif
-    vma->vm_pgoff = 0;
     // set the page protection to non-cached
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
-    if (vma->vm_pgoff == 0) {
-         // save the vma into the hash table
-        ret = fgds_setup_mmap_buffer(filp, vma);
-        return ret;
-    }
-
-    return -EINVAL;
+    return fgds_setup_mmap_buffer(filp, vma);
 }
