@@ -59,7 +59,6 @@ static void __fgds_release_gpu_memory_core(struct p2p_vmap *map)
 
 void release_gpu_memory(struct p2p_vmap* map)
 {
-    printk("in fgds-mem.c: release_gpu_memory\n");
     if (!map)
         return;
 
@@ -72,7 +71,7 @@ static void force_release_gpu_memory(struct p2p_vmap* map)
     if (!map)
         return;
 
-    printk("in fgds-mem.c: force_release_gpu_memory, Nvidia driver forcefully reclaimed %lu GPU pages\n", map->dev_page_num);
+    pr_debug("Nvidia driver forcefully reclaimed %lu GPU pages\n", map->dev_page_num);
 
     /*
      * NVIDIA 驱动通过 free_callback 回调到这里，通知我们这段 P2P
@@ -87,12 +86,12 @@ fgds_mmap_buffer_t fgds_lookup_mmap_buffer(u64 cpuvaddr, u64 length) {
     struct vm_area_struct *vma;
 
     if (!cpuvaddr) {
-        printk("fgds_lookup_mmap_buffer get cpuvaddr error");
+        printk("fgds_lookup_mmap_buffer get cpuvaddr error\n");
         goto out;
     }
 
     if (cpuvaddr % PAGE_SIZE) {
-        printk("fgds_lookup_mmap_buffer cpuvaddr not aligned");
+        printk("fgds_lookup_mmap_buffer cpuvaddr not aligned\n");
         goto out;
     }
 
@@ -104,13 +103,13 @@ fgds_mmap_buffer_t fgds_lookup_mmap_buffer(u64 cpuvaddr, u64 length) {
     mbuffer = (fgds_mmap_buffer_t)vma->vm_private_data;
     if (mbuffer!= NULL) {
         if (mbuffer->c_vaddr!= cpuvaddr || mbuffer->map_len!= length) {
-            printk("reg region is not same as mmap region");
+            printk("reg region is not same as mmap region\n");
             goto out;
         } else {
             return mbuffer;
         }
     } else {
-        printk("vma found, ·but mbuffer is none!\n");
+        printk("vma found, but mbuffer is none!\n");
         goto out;
     }
 
@@ -179,7 +178,7 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
     mbuffer->map = kmalloc(sizeof(struct p2p_vmap) + (nr_dev_pages - 1) * sizeof(uint64_t), GFP_KERNEL);
     if (mbuffer->map == NULL)
     {
-        printk("Failed to allocate mapping descriptor\n");
+        printk("Failed to allocate p2p_vmap descriptor\n");
         ret = -ENOMEM;
         goto out;
     }
@@ -198,7 +197,7 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
     gd = kmalloc(sizeof(struct gpu_region), GFP_KERNEL);
     if (gd == NULL)
     {
-        printk("Failed to allocate mapping descriptor\n");
+        printk("Failed to allocate gpu_region descriptor\n");
         ret = -ENOMEM;
         goto out;
     }
