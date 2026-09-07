@@ -30,12 +30,10 @@
 
 #include "nvfs-pci.h"
 
-#include <linux/seq_file.h>
 #include <linux/topology.h>
 
-#define MAX_PCIE_BW_INDEX (PCIE_LNK_X32 * 5U)
-
-
+/* ACS 使能位全集：SV|RR|CR|UF|EC|CRS，即 0x7f */
+#define NVFS_ACS_CTRL_ALL 0x7f
 
 // from drivers/pci/pci.h.
 const unsigned char nvfs_pcie_link_speed_table[MAX_LNKSPEED_ENTRIES] = {
@@ -224,7 +222,7 @@ static bool nvfs_pcie_acs_enabled(struct pci_dev *pdev) {
 		return false;
 	pci_read_config_word(pdev, pos + PCI_ACS_CAP, &cap);
 	pci_read_config_word(pdev, pos + PCI_ACS_CTRL, &ctrl);
-	return cap && (ctrl & 0x7f);
+	return cap && (ctrl & NVFS_ACS_CTRL_ALL);
 }
 
 /*

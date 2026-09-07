@@ -53,9 +53,6 @@
 // minimum distance applied where nodes cross RP
 #define BASE_PCI_DISTANCE_CROSSRP S8_MAX
 
-// special case for null entry for pci paths without root port
-#define PCI_NULL_DEV_NORP (UINT_MAX - 1)
-
 // device classes probed by nvidia-fs for generating pci-distance matrix
 #define PCI_CLASS_NETWORK_INFINIBAND 0x207
 
