@@ -34,11 +34,8 @@
 #include "nvfs-p2p.h"
 #include "nvfs-pci.h"
 
-static DEFINE_IDA(fgds_chr_minor_ida);
 static dev_t fgds_chr_devt;
 static struct class *fgds_chr_class;
-struct device fgds_chr_dev_device;
-struct cdev fgds_chr_dev;
 
 #define FGDS_MINORS 1
 
@@ -357,20 +354,14 @@ void fgds_cdev_del(struct cdev *cdev, struct device *cdev_device,
 		dev->p2p_pgmap = NULL;
 	}
 	dev->dev = NULL;
-	//ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
 }
 
 int fgds_cdev_add(struct cdev *cdev, struct device *cdev_device,
                    const struct file_operations *fops, struct module *owner,
                    struct fgds_dev *dev) {
 	int ret;
-	//ret = ida_simple_get(&fgds_chr_minor_ida, 0, MAX_DEV_NUM, GFP_KERNEL);
-	//if (ret < 0)
-	//	return ret;
-	//dev->idx = ret;
 	ret = dev_set_name(cdev_device, "fgds_dev%d", dev->idx);
 	if (ret) {
-		//ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
 		return ret;
 	}
 	cdev_device->devt = MKDEV(MAJOR(fgds_chr_devt), dev->idx);
@@ -379,8 +370,6 @@ int fgds_cdev_add(struct cdev *cdev, struct device *cdev_device,
 	cdev_init(cdev, fops);
 	cdev->owner = owner;
 	ret = cdev_device_add(cdev, cdev_device);
-	//if (ret)
-	//	ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
 	return ret;
 }
 
@@ -502,7 +491,6 @@ static void __exit fgds_exit(void) {
 	class_destroy(fgds_chr_class);
 	// unregister the character device region
 	unregister_chrdev_region(fgds_chr_devt, FGDS_MINORS);
-	ida_destroy(&fgds_chr_minor_ida);
 
 	printk("fgds_exit, Good bye!\n");
 }
