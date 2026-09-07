@@ -17,7 +17,7 @@
 #include "nvfs-p2p.h"
 #include "config-host.h"
 
-static DEFINE_HASHTABLE(fgds_io_mbuffer_hash, FGDS_MAX_SHADOW_ALLOCS_ORDER);
+static DEFINE_HASHTABLE(fgds_io_mbuffer_hash, FGDS_IO_MBUFFER_HASH_BITS);
 static spinlock_t lock ____cacheline_aligned; 
 atomic_t base_index_cnt = ATOMIC_INIT(0);
 
