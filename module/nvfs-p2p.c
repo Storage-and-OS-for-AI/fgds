@@ -145,7 +145,7 @@ int nvfs_nvidia_p2p_dma_unmap_pages(struct pci_dev *peer,
 	if(nvidia_p2p_dma_unmap_pages_p) {
 		return nvidia_p2p_dma_unmap_pages_p(peer, page_table, dma_mapping);
 	} else {
-		return -ENOMEM;
+		return -EOPNOTSUPP;
 	}
 }
 int nvfs_nvidia_p2p_get_pages(uint64_t p2p_token, uint32_t va_space,
@@ -157,7 +157,7 @@ int nvfs_nvidia_p2p_get_pages(uint64_t p2p_token, uint32_t va_space,
 	if(nvidia_p2p_get_pages_p) {
 		return nvidia_p2p_get_pages_p(p2p_token, va_space, virtual_address, length, page_table, free_callback, data);
 	} else {
-		return -ENOMEM;
+		return -EOPNOTSUPP;
 	}
 }
 int nvfs_nvidia_p2p_put_pages(uint64_t p2p_token, uint32_t va_space,
@@ -166,7 +166,7 @@ int nvfs_nvidia_p2p_put_pages(uint64_t p2p_token, uint32_t va_space,
 	if(nvidia_p2p_put_pages_p) {
 		return nvidia_p2p_put_pages_p(p2p_token, va_space, virtual_address, page_table);
 	} else {
-		return -ENOMEM;
+		return -EOPNOTSUPP;
 	}
 }
 int nvfs_nvidia_p2p_dma_map_pages(struct pci_dev *peer,
@@ -175,20 +175,20 @@ int nvfs_nvidia_p2p_dma_map_pages(struct pci_dev *peer,
 	if(nvidia_p2p_dma_map_pages_p) {
 		return nvidia_p2p_dma_map_pages_p(peer, page_table, dma_mapping);
 	} else {
-		return -ENOMEM;
+		return -EOPNOTSUPP;
 	}
 }
 int nvfs_nvidia_p2p_free_dma_mapping(struct nvidia_p2p_dma_mapping *dma_mapping) {
 	if(nvidia_p2p_free_dma_mapping_p) {
 		return nvidia_p2p_free_dma_mapping_p(dma_mapping);
 	} else {
-		return -ENOMEM;
+		return -EOPNOTSUPP;
 	}
 }
 int nvfs_nvidia_p2p_free_page_table(struct nvidia_p2p_page_table *page_table) {
 	if(nvidia_p2p_free_page_table_p) {
 		return nvidia_p2p_free_page_table_p(page_table);
 	} else {
-		return -ENOMEM;
+		return -EOPNOTSUPP;
 	}
 }
