@@ -342,7 +342,6 @@ static int __fgds_deregmem(fgds_mmap_buffer_t *pb, u64 n_addr, u64 c_addr, size_
     para.map_param.gpu_addr_size = len;
     para.map_param.dev.dev_id = pb->device_id;
 
-    // print_mem(&para, sizeof(fgds_ioctl_para_t));
     ret = ioctl(pb->dev_fd, FGDS_IOCTL_UNMAP, &para);
 
     return ret;
