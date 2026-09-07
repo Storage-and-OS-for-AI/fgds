@@ -2,20 +2,20 @@
 #include "fgds_utils.h"
 
 int main(int argc, char **argv){   
-    GDSOpts opts;
+    BenchmarkOpts opts;
 
     if (!parseOpts(argc, argv, opts)){
         exit(EXIT_FAILURE);
     }
 
     switch (opts.xfer_mode) {
-        case GPUD_WITHOUT_PHONY_BUFFER:
+        case GPUD_MODE_FGDS:
             run_fgds(opts);
             break;
-        case GPUD_WITH_PYONY_BUFFER:
+        case GPUD_MODE_GDS:
             run_gds(opts);
             break;
-        case GPUD_WITH_CPU_BUFFER:
+        case GPUD_MODE_POSIX:
             run_posix(opts);
             break;
         default:

@@ -1,9 +1,26 @@
-"""Kylin FGDS helpers mirroring :mod:`torch.cuda.gds` (see ``fgds_design.md`` in this directory)."""
+"""
+Copyright (c) 2025-2026 KylinSoft Co., Ltd.
+
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Kylin FGDS helpers mirroring :mod:`torch.cuda.gds` (see ``fgds_design.md`` in this directory).
+"""
 
 import os
 import sys
 import threading
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -16,47 +33,32 @@ __all__: list[str] = [
     "FgdsFile",
 ]
 
-
-def _maybe_prepend_repo_python_to_path() -> None:
-    # Add repo-local `python/` to import path for source-tree usage.
-    """Allow `import fgds` when running from a PyTorch source tree (`python/fgds`)."""
-    try:
-        root = Path(__file__).resolve().parent.parent.parent
-        py = root / "python"
-        if py.is_dir() and (py / "fgds").is_dir():
-            s = str(py)
-            if s not in sys.path:
-                sys.path.insert(0, s)
-    except OSError:
-        pass
-
+# Require an installed `fgds` package; do not mutate sys.path for source-tree imports.
+_FGDS_BIND_UNAVAILABLE = (
+    "fgds bindings are not available. Install the `fgds` Python package "
+    "(from the repository `python/` directory: `python -m pip install .`) "
+    "and ensure `libfgds.so` can be loaded (for example via LD_LIBRARY_PATH)."
+)
 
 _fgds_bind: Any = None
 _fgds_import_error: BaseException | None = None
 
 
 def _load_fgds_bind() -> Any:
-    # Lazily import and cache fgds bindings, surfacing actionable errors.
+    # Lazily import and cache installed fgds bindings, surfacing actionable errors.
     global _fgds_bind, _fgds_import_error
     if _fgds_bind is not None:
         return _fgds_bind
     if _fgds_import_error is not None:
-        raise RuntimeError(
-            "fgds bindings are not available. Install the `fgds` package or ensure "
-            "repository `python/fgds` is on PYTHONPATH and `libfgds.so` can be loaded."
-        ) from _fgds_import_error
+        raise RuntimeError(_FGDS_BIND_UNAVAILABLE) from _fgds_import_error
     try:
-        _maybe_prepend_repo_python_to_path()
         import fgds.fgds_bind as fb  # type: ignore[import-not-found]
 
         _fgds_bind = fb
         return fb
     except BaseException as e:
         _fgds_import_error = e
-        raise RuntimeError(
-            "fgds bindings are not available. Install the `fgds` package or ensure "
-            "repository `python/fgds` is on PYTHONPATH and `libfgds.so` can be loaded."
-        ) from e
+        raise RuntimeError(_FGDS_BIND_UNAVAILABLE) from e
 
 
 _file_lock = threading.Lock()

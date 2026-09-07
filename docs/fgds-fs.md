@@ -19,24 +19,24 @@ static int __init fgds_init(void) {
 
     // Initialize the GPU information table
 	nvfs_fill_gpu2peer_distance_table_once();
-	npu_num = 0;
+	gpu_num = 0;
 	for (i = 0; i < MAX_DEV_NUM; i++) {
 		if (gpu_info_table[i] != 0) {
-			npu_num++;
+			gpu_num++;
 		} else {
 			break;
 		}
 	}
 
-	if (npu_num <= 0 || npu_num > MAX_DEV_NUM) {
-		printk("devdrv_get_devnum error:%u\n", npu_num);
+	if (gpu_num <= 0 || gpu_num > MAX_DEV_NUM) {
+		printk("devdrv_get_devnum error:%u\n", gpu_num);
 		return -1;
 	}
     // obtain the PCIe BAR information of each GPU device via the PCIe bus 
     // and remap the GPU device's BAR memory to the kernel space.
-	ret = fgds_ctrl_init(&ctrl, npu_num);
+	ret = fgds_ctrl_init(&ctrl, gpu_num);
 	if (ret != 0) {
-		printk("npu_ctrl_init error:%d\n", ret);
+		printk("fgds_ctrl_init error:%d\n", ret);
 		return -1;
 	}
 
@@ -67,13 +67,13 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
     for (int i = 0; i < dev_num; i++) {
         // get the PCIe BAR information of each GPU device
         ...
-		dev_ctrl->phx_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
+		dev_ctrl->gpu_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
         // get the maximum BAR size for each GPU device, which is the size of the GPU memory
-        dev_ctrl->phx_dev[i].paddr = pci_resource_start(dev_ctrl->phx_dev[i].dev, max_bar_idx);
-        dev_ctrl->phx_dev[i].size = pci_resource_len(dev_ctrl->phx_dev[i].dev, max_bar_idx);
+        dev_ctrl->gpu_dev[i].paddr = pci_resource_start(dev_ctrl->gpu_dev[i].dev, max_bar_idx);
+        dev_ctrl->gpu_dev[i].size = pci_resource_len(dev_ctrl->gpu_dev[i].dev, max_bar_idx);
         
         // remap the GPU device's BAR memory to the kernel space
-        ret = fgds_devm_memremap(&dev_ctrl->phx_dev[i]);
+        ret = fgds_devm_memremap(&dev_ctrl->gpu_dev[i]);
 		if (ret)
 			return ret;
     }
@@ -92,7 +92,7 @@ static void __exit fgds_exit(void) {
 	int i;
     // delete the character devices created during initialization
 	for (i = 0; i < ctrl.dev_num; i++) {
-		fgds_cdev_del(&ctrl.phx_dev[i].cdev, &ctrl.phx_dev[i].device, &ctrl.phx_dev[i]);
+		fgds_cdev_del(&ctrl.gpu_dev[i].cdev, &ctrl.gpu_dev[i].device, &ctrl.gpu_dev[i]);
 	}
 
     // delete nvidia_p2p symbols
@@ -135,7 +135,7 @@ fgds-fs provides a character device interface that allows user-space application
  */
 static int fgds_open(struct inode *inode, struct file *filp) {
     // save the device metadata in the file structure
-    filp->private_data = &ctrl.phx_dev[dev_idx];
+    filp->private_data = &ctrl.gpu_dev[dev_idx];
 	return 0；
 }
 ```
@@ -166,7 +166,7 @@ int fgds_mmap(struct file *filp, struct vm_area_struct *vma) {
 
     if (vma->vm_pgoff == 0) {
         // save the vma into the hash table
-        ret = fgds_add_phony_buffer(filp, vma);
+        ret = fgds_setup_mmap_buffer(filp, vma);
         return ret;
     }
 

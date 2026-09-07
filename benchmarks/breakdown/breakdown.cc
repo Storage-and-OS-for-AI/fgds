@@ -234,7 +234,7 @@ void fgds_io_test(){
     get_time_diff(start, end);
 
     if (ret){
-        pr_error("fgds unregmem failed");
+        pr_error("fgds deregmem failed");
         return;
     }
 

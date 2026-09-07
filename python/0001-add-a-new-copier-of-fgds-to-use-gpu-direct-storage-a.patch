@@ -1,0 +1,857 @@
+From 7750f3fd75a37b8eb5ba885121c3c1859541af38 Mon Sep 17 00:00:00 2001
+From: Keven Kuang <kuangkai@kylinos.cn>
+Date: Wed, 8 Apr 2026 18:04:23 +0800
+Subject: [PATCH] add a new copier of fgds to use gpu direct storage access
+ tool fgds
+
+Signed-off-by: Kai Kuang <kuangkai@kylinos.cn>
+---
+ examples/test_fgds.py              |  88 ++++++++
+ fastsafetensors/copier/__init__.py |   1 +
+ fastsafetensors/copier/fgds.py     | 229 +++++++++++++++++++
+ fastsafetensors/copier/gds.py      |  11 +-
+ fastsafetensors/cpp/fgds_ext.cpp   | 345 +++++++++++++++++++++++++++++
+ fastsafetensors/cpp/fgds_ext.pyi   |  21 ++
+ fastsafetensors/loader.py          |   5 +-
+ setup.py                           |   6 +
+ 8 files changed, 701 insertions(+), 5 deletions(-)
+ create mode 100644 examples/test_fgds.py
+ create mode 100644 fastsafetensors/copier/fgds.py
+ create mode 100644 fastsafetensors/cpp/fgds_ext.cpp
+ create mode 100644 fastsafetensors/cpp/fgds_ext.pyi
+
+diff --git a/examples/test_fgds.py b/examples/test_fgds.py
+new file mode 100644
+index 0000000..d39d671
+--- /dev/null
++++ b/examples/test_fgds.py
+@@ -0,0 +1,88 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: Apache-2.0
++
++import time
++import torch
++from fastsafetensors import fastsafe_open, SafeTensorsFileLoader
++from fastsafetensors.st_types import Device
++
++
++# Test function to measure loading time
++def test_loading_time(loader_name, filenames, device="cuda:0", nogds=False):
++    print(f"Testing {loader_name}...")
++    start_time = time.time()
++
++    with fastsafe_open(filenames=filenames, device=device, nogds=nogds) as f:
++        keys = f.keys()
++        print(f"Found {len(keys)} tensors")
++
++        # Load all tensors
++        tensors = {}
++        for key in keys:
++            tensor = f.get_tensor(key)
++            tensors[key] = tensor
++
++    end_time = time.time()
++    loading_time = end_time - start_time
++    print(f"{loader_name} loading time: {loading_time:.4f} seconds")
++    return loading_time
++
++
++# Test with different copier types
++def test_copier_types(filenames, device="cuda:0"):
++    print("Testing different copier types...")
++    print("=" * 60)
++
++    # nogds_time = test_loading_time("NoGDS", filenames, device, nogds=True)
++    # print("=" * 60)
++
++    nogds = False
++    use_fgds = os.environ.get('USE_FGDS', '').lower() in ('true', '1', 'yes')
++    if use_fgds:
++        copier = "FGDS"
++        nogds = True
++    else:
++        copier = "GDS"
++
++    take_time = test_loading_time(copier, filenames, device, nogds=nogds)
++    print("-" * 60)
++
++    # Compare results
++    print("Performance comparison:")
++    print(f"{copier}: {take_time:.4f} seconds")
++
++
++if __name__ == "__main__":
++    # Use the example files provided in the repository
++    import os
++
++    # example_dir = os.path.dirname(os.path.abspath(__file__))
++    # filenames = [os.path.join(example_dir, "a.safetensors"), os.path.join(example_dir, "b.safetensors")]
++
++    # example_dir = ["/data3/Qwen-0.6B", "/data3/Qwen3-8B", "/data3/Qwen-32B"]
++    example_dir = ["/data3/Qwen-32B"]
++    # example_dir = ["/data3/Qwen3-8B"]
++    # example_dir = ["/data3/Qwen-0.6B"]
++    for edir in example_dir:
++        time.sleep(2)
++        os.system("sync && echo 3 > /proc/sys/vm/drop_caches")
++
++        items = os.listdir(edir)
++        filenames = []
++        for item in items:
++            if item.endswith(".safetensors"):
++                filenames.append(item)
++        filenames = [os.path.join(edir, f) for f in sorted(filenames)]
++        # Check if files exist
++        for filename in filenames:
++            if not os.path.exists(filename):
++                print(f"File not found: {filename}")
++                print("Please run gen.py to generate test files first.")
++                exit(1)
++
++        # Test with GPU if available
++        if torch.cuda.is_available():
++            print("Testing on GPU...")
++            test_copier_types(filenames, device="cuda:0")
++        else:
++            print("GPU not available, skipping GPU test.")
+\ No newline at end of file
+diff --git a/fastsafetensors/copier/__init__.py b/fastsafetensors/copier/__init__.py
+index b7690db..96dc2f4 100644
+--- a/fastsafetensors/copier/__init__.py
++++ b/fastsafetensors/copier/__init__.py
+@@ -7,6 +7,7 @@ if sys.platform == "win32":
+     from .dstorage import DStorageFileCopier
+ 
+ from .gds import GdsFileCopier
++from .fgds import FgdsFileCopier
+ from .nogds import NoGdsFileCopier
+ from .registry import (
+     CopierConstructFunc,
+diff --git a/fastsafetensors/copier/fgds.py b/fastsafetensors/copier/fgds.py
+new file mode 100644
+index 0000000..9c95961
+--- /dev/null
++++ b/fastsafetensors/copier/fgds.py
+@@ -0,0 +1,229 @@
++# SPDX-License-Identifier: Apache-2.0
++import time
++import warnings
++import ctypes
++import os
++import tempfile
++import torch
++from typing import Dict, Optional, List
++
++from ..common import SafeTensorsMetadata, init_logger, is_gpu_found
++from ..frameworks import FrameworkOpBase, TensorBase
++from ..st_types import Device, DeviceType, DType
++from .base import CopierInterface
++from .nogds import load_library_func, new_nogds_file_copier
++from .registry import CopierConstructFunc, register_copier_constructor
++
++# Import C++ FGDS extension
++from .. import fgds_ext as fstcpp
++
++logger = init_logger(__name__)
++
++
++class FgdsFileCopier(CopierInterface):
++    def __init__(
++        self,
++        metadata: SafeTensorsMetadata,
++        device: Device,
++        reader: fstcpp.fgds_file_reader,
++        framework: FrameworkOpBase,
++        max_threads: int = 16,
++    ):
++        self.framework = framework
++        self.metadata = metadata
++        self.device = device
++        device_list = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
++        idx = device.index if device.index is not None else 0
++        self.device_id = int(device_list.split(",")[idx])
++        self.fgds = None
++        self.copy_reqs: Dict[int, int] = {}
++        self.aligned_length = 0
++        self.aligned_offset = 0
++        self.max_threads = max_threads
++        self.o_direct = True
++
++        # For C++ implementation
++        self.fgds_handle = None
++        self.fgds_reader = reader
++        # For Python fallback
++        result = fstcpp.fgds_open(self.device_id)
++        if result != 0:
++            warnings.warn(f"fgds_open failed with error code: {result}", UserWarning)
++        
++        self.registered_memory = None
++
++    def set_o_direct(self, enable: bool):
++        self.o_direct = True
++
++    def submit_io(
++        self, use_buf_register: bool, max_copy_block_size: int
++    ) -> object:  # Return GPU buffer object
++        # Calculate alignment and offsets
++        ALIGN = 64 * 1024  # FGDS typical alignment
++        offset = self.metadata.header_length
++        length = self.metadata.size_bytes - self.metadata.header_length
++        head_bytes = offset % ALIGN
++        tail_bytes = (length + head_bytes) % ALIGN
++        if tail_bytes > 0:
++            tail_bytes = ALIGN - tail_bytes
++            aligned_length = length + head_bytes + tail_bytes
++        else:
++            aligned_length = length + head_bytes
++        aligned_offset = offset - head_bytes
++
++        # Allocate GPU memoryol
++        start = time.time()
++        gbuf = self.framework.alloc_tensor_memory(aligned_length, self.device)
++        gbuf_ptr = gbuf.get_base_address()
++        #warnings.warn(f"device is :{self.device.as_str()}, {self.device_id}", UserWarning)
++        warnings.warn(f"fgds alloc mem {gbuf_ptr} take {time.time() - start:.4f} seconds")
++        
++        # Set max_copy_block_size to 1 GB for better performance
++        #max_copy_block_size = 1 * 1024 * 1024 * 1024  # 1 GB
++        # Create FGDS file handle
++        self.fgds_handle = fstcpp.fgds_file_handle(self.metadata.src, self.o_direct, self.device_id)
++
++        # For FGDS, we need to register GPU memory
++        result = fstcpp.fgds_regmem(self.device_id, gbuf_ptr, aligned_length, None)
++        if result != 0:
++            warnings.warn(f"fgds_regmem failed with error code: {result}", UserWarning)
++            self.registered_memory = None
++        else:
++            self.registered_memory = (self.device_id, gbuf_ptr, aligned_length)
++        #warnings.warn(f"fgds regmem gpu buf: {gbuf_ptr}, aligned length: {aligned_length}, device: {device_id}", UserWarning)
++        warnings.warn(f"fgds alloc mem and cufile register take {time.time() - start:.4f} seconds")
++        # Submit read requests asynchronously
++        self.copy_reqs = {}
++        count = 0
++        while count < aligned_length:
++            req_len = aligned_length - count
++            if req_len > max_copy_block_size:
++                req_len = max_copy_block_size
++            # warnings.warn(f"fgds req_len = {req_len}, aligned len = {aligned_length}")
++            # Create device buffer
++            dev_buf = fstcpp.fgds_device_buffer(gbuf_ptr + count, req_len)
++            #warnings.warn(f"create device buffer:{gbuf_ptr + count}, len:{req_len}")
++            # Submit read request
++            req_id = self.fgds_reader.submit_read(
++                self.fgds_handle,
++                dev_buf,
++                aligned_offset + count,
++                req_len,
++                count
++            )
++
++            # Store request information
++            self.copy_reqs[req_id] = count
++            # warnings.warn(f"submit read and copy reqs, {req_id}, off:{aligned_offset + count}, len:{req_len} take {time.time()-start:.4f} seconds")
++            count += req_len
++        
++        self.aligned_offset = aligned_offset
++        self.aligned_length = aligned_length
++        self.gbuf = gbuf
++        return gbuf
++
++    def wait_io(
++        self,
++        gbuf: object,  # GPU buffer object
++        dtype: DType = DType.AUTO,
++        noalign: bool = False,
++    ) -> Dict[str, TensorBase]:
++        # Wait for all read requests to complete
++        for req_id in sorted(self.copy_reqs.keys()):
++            result = self.fgds_reader.wait_read(req_id)
++            if result < 0:
++                warnings.warn(f"fgds_read failed for request {req_id}", UserWarning)
++            # warnings.warn(f"wait read {req_id} done")
++        # Deregister memory if it was registered
++        if hasattr(self, 'registered_memory') and self.registered_memory:
++            device_id, addr, size = self.registered_memory
++            #warnings.warn(f"start deregmem {addr}, size:{size}")
++            result = fstcpp.fgds_deregmem(device_id, addr, size)
++            # result = self.fgds_handle.get_wrapper().deregmem(device_id, addr, size)
++            if result != 0:
++                warnings.warn(f"fgds_deregmem failed with error code: {result}", UserWarning)
++            self.registered_memory = None
++            #warnings.warn(f"deregmem {addr}, size:{size} done")
++
++        # Clear copy requests
++        self.copy_reqs = []
++
++        # Get tensors from metadata
++        return self.metadata.get_tensors(
++            gbuf, self.device, self.aligned_offset, dtype=dtype
++        )
++
++    def __del__(self):
++        pass
++
++_inited_fgds = False
++
++
++def init_fgds():
++    load_library_func()
++    global _inited_fgds
++    if not _inited_fgds:
++        # FGDS initialization is handled by FgdsDriver or C++ implementation
++        _inited_fgds = True
++
++
++@register_copier_constructor("fgds")
++def new_fgds_file_copier(
++    device: Device,
++    framework: FrameworkOpBase,
++    bbuf_size_kb: int = 16 * 1024,
++    max_threads: int = 16,
++) -> CopierConstructFunc:
++    init_fgds()
++    device_is_not_cpu = device.type != DeviceType.CPU
++    if device_is_not_cpu and not is_gpu_found():
++        raise Exception(
++            "[FAIL] GPU runtime library (libcudart.so or libamdhip64.so) does not exist"
++        )
++    
++    # Check if FGDS is available
++    try:
++        # Test C++ FGDS implementation
++        device_list = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
++        idx = device.index if device.index is not None else 0
++        device_id = int(device_list.split(",")[idx])
++        
++        # Create a temporary file to test FGDS availability
++        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
++            tmp_file.write(b"test")
++            tmp_filename = tmp_file.name
++        
++        try:
++            # Create a temporary handle to test FGDS availability
++            # Use o_direct=False for better compatibility
++            tmp_handle = fstcpp.fgds_file_handle(tmp_filename, True, device_id)
++            del tmp_handle
++        finally:
++            # Clean up temporary file
++            if os.path.exists(tmp_filename):
++                os.unlink(tmp_filename)
++    except Exception as e:
++        warnings.warn(
++            f"FGDS is not available: {e}. Falling back to NoGDS.",
++            UserWarning,
++        )
++        return new_nogds_file_copier(device, bbuf_size_kb, max_threads)
++    
++    # Create FGDS file reader
++    reader = fstcpp.fgds_file_reader(max_threads, device_id)
++    
++    def construct_copier(
++        metadata: SafeTensorsMetadata,
++        device: Device,
++        framework: FrameworkOpBase,
++    ) -> CopierInterface:
++        return FgdsFileCopier(
++            metadata,
++            device, 
++            reader,
++            framework,
++            max_threads=max_threads
++        )
++
++    warnings.warn(f"use fgds copier max_threads:{max_threads}")
++    return construct_copier
+diff --git a/fastsafetensors/copier/gds.py b/fastsafetensors/copier/gds.py
+index 97a98d1..92ed538 100644
+--- a/fastsafetensors/copier/gds.py
++++ b/fastsafetensors/copier/gds.py
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: Apache-2.0
+-
++import time
+ import platform
+ import warnings
+ from typing import Dict, List, Optional
+@@ -62,6 +62,7 @@ class GdsFileCopier(CopierInterface):
+         else:
+             # No GPU platform detected, use O_DIRECT
+             self.o_direct = True
++        warnings.warn(f"gds o_direct = {self.o_direct}")
+ 
+     def set_o_direct(self, enable: bool):
+         self.o_direct = enable
+@@ -72,6 +73,7 @@ class GdsFileCopier(CopierInterface):
+         dev_is_cuda = (
+             self.device.type == DeviceType.CUDA or self.device.type == DeviceType.GPU
+         )
++        start = time.time()
+         ALIGN: int = fstcpp.get_alignment_size()
+         try:
+             self.fh = fstcpp.gds_file_handle(
+@@ -122,14 +124,15 @@ class GdsFileCopier(CopierInterface):
+         else:
+             aligned_length = length + head_bytes
+         aligned_offset = offset - head_bytes
+-
+         gbuf = self.framework.alloc_tensor_memory(aligned_length, self.device)
++        warnings.warn(f"gds alloc mem take {time.time() - start:.4f} seconds")
+         if use_buf_register:
+             count = 0
+             while count < aligned_length:
+                 req_len = aligned_length - count
+                 if req_len > max_copy_block_size:
+                     req_len = max_copy_block_size
++                #warnings.warn(f"gds req_len = {req_len}, aligned len = {aligned_length}")
+                 if gbuf.cufile_register(count, req_len) < 0:
+                     raise Exception(
+                         "submit_io: register_buffer failed, ptr=0x{:x}, count={}, len={}".format(
+@@ -137,7 +140,7 @@ class GdsFileCopier(CopierInterface):
+                         )
+                     )
+                 count += req_len
+-
++        warnings.warn(f"gds alloc mem and cufile register take {time.time() - start:.4f} seconds")
+         count = 0
+         while count < aligned_length:
+             req_len = aligned_length - count
+@@ -178,6 +181,7 @@ class GdsFileCopier(CopierInterface):
+                 failed.append(req)
+             if c != -1:
+                 gbuf.cufile_deregister(c)
++            warnings.warn(f"gds wait read done {req}")
+         if self.fh is not None:
+             del self.fh
+             self.fh = None
+@@ -284,4 +288,5 @@ def new_gds_file_copier(
+             metadata, device, reader, framework, fallback_cache=fallback_cache
+         )
+ 
++    warnings.warn(f"use gds copier max_threads:{max_threads}, bbuf_size_kb:{bbuf_size_kb}")
+     return construct_copier
+diff --git a/fastsafetensors/cpp/fgds_ext.cpp b/fastsafetensors/cpp/fgds_ext.cpp
+new file mode 100644
+index 0000000..8c8d58f
+--- /dev/null
++++ b/fastsafetensors/cpp/fgds_ext.cpp
+@@ -0,0 +1,345 @@
++// SPDX-License-Identifier: Apache-2.0
++
++#include <fcntl.h>
++#include <cstring>
++#include <unistd.h>
++#include <sys/mman.h>
++#include <chrono>
++#include <dlfcn.h>
++#include <cstdlib>
++#include <algorithm>
++#include <thread>
++#include <mutex>
++#include <vector>
++#include <map>
++#include <atomic>
++#include <pybind11/pybind11.h>
++
++#include "ext.hpp"
++
++namespace py = pybind11;
++
++#define ALIGN 65536
++
++static bool debug_log = false;
++
++void set_debug_log(bool _debug_log)
++{
++    debug_log = _debug_log;
++}
++
++typedef struct fgds_fileid {
++    int fd;
++    int device_id;
++} fgds_fileid;
++
++// FGDS library functions and state (similar to gds ext.cpp)
++static void* fgds_lib_handle = nullptr;
++static int (*fgds_open)(int) = nullptr;
++static int (*fgds_close)(int) = nullptr;
++static int (*fgds_regmem)(int, uintptr_t, size_t, void**) = nullptr;
++static int (*fgds_deregmem)(int, uintptr_t, size_t) = nullptr;
++static ssize_t (*fgds_read)(fgds_fileid, void*, size_t, off_t, size_t) = nullptr;
++static std::atomic<int> fgds_ref_count{0};
++
++template <typename T> void mydlsym(T** h, void* lib, const char* name) {
++    *h = reinterpret_cast<T*>(dlsym(lib, name));
++}
++
++static void load_fgds_library() {
++    int expected = 0;
++    if (fgds_ref_count.compare_exchange_strong(expected, 1)) {
++        void* lib = dlopen("libfgds.so", RTLD_LAZY | RTLD_GLOBAL | RTLD_NODELETE);
++        if (!lib) {
++            fgds_ref_count.store(0);
++            throw std::runtime_error("Failed to load libfgds.so");
++        }
++        
++        mydlsym(&fgds_open, lib, "fgds_open");
++        mydlsym(&fgds_close, lib, "fgds_close");
++        mydlsym(&fgds_regmem, lib, "fgds_regmem");
++        mydlsym(&fgds_deregmem, lib, "fgds_deregmem");
++        mydlsym(&fgds_read, lib, "fgds_read");
++        if (!fgds_open || !fgds_close || !fgds_regmem ||
++            !fgds_deregmem || !fgds_read) {
++            dlclose(lib);
++            fgds_ref_count.store(0);
++            throw std::runtime_error("Failed to load FGDS functions");
++        }
++        fgds_lib_handle = lib;
++    } else {
++        fgds_ref_count.fetch_add(1);
++    }
++}
++
++static void close_fgds_library() {
++    if (fgds_ref_count.fetch_sub(1) == 1) {
++        if (fgds_lib_handle) {
++            dlclose(fgds_lib_handle);
++            fgds_lib_handle = nullptr;
++            fgds_open = nullptr;
++            fgds_close = nullptr;
++            fgds_regmem = nullptr;
++            fgds_deregmem = nullptr;
++            fgds_read = nullptr;
++        }
++    }
++}
++
++static bool is_fgds_initialized() {
++    return fgds_lib_handle != nullptr;
++}
++
++// FGDS API wrapper
++class FgdsWrapper {
++public:
++    FgdsWrapper() {
++        load_fgds_library();
++    }
++    
++    ~FgdsWrapper() {
++        close_fgds_library();
++    }
++
++    int open(int device_id) {
++        return fgds_open(device_id);
++    }
++
++    int close(int device_id) {
++        return fgds_close(device_id);
++    }
++
++    int regmem(int device_id, uintptr_t addr, size_t size, void** target_addr) {
++        return fgds_regmem(device_id, addr, size, target_addr);
++    }
++
++    int deregmem(int device_id, uintptr_t addr, size_t size) {
++        return fgds_deregmem(device_id, addr, size);
++    }
++
++    ssize_t read(int fd, int device_id, void* buf, size_t length, off_t offset, size_t ptr_off) {
++        fgds_fileid fid;
++        fid.fd = fd;
++        fid.device_id = device_id;
++        return fgds_read(fid, buf, offset, length, ptr_off);
++    }
++};
++
++// FGDS file handle class
++class fgds_file_handle {
++public:
++    fgds_file_handle(std::string filename, bool o_direct, int device_id) {
++        try {
++            fgds_wrapper = new FgdsWrapper();
++            this->device_id = device_id;
++            this->filename = filename;
++
++            // Open the file
++            int flags = O_RDONLY;
++            if (o_direct) {
++                flags |= O_DIRECT;
++            }
++            fd = open(filename.c_str(), flags, 0644);
++            if (fd < 0) {
++                throw std::runtime_error("Failed to open file: " + filename);
++            }
++
++            // Initialize fileid
++            fid.fd = fd;
++            fid.device_id = device_id;
++        } catch (const std::exception& e) {
++            cleanup();
++            throw;
++        }
++    }
++
++    ~fgds_file_handle() {
++        cleanup();
++    }
++
++    int get_device_id() const {
++        return device_id;
++    }
++
++    int get_fd() const {
++        return fd;
++    }
++
++    fgds_fileid get_fileid() const {
++        return fid;
++    }
++
++    FgdsWrapper* get_wrapper() const {
++        return fgds_wrapper;
++    }
++
++private:
++    void cleanup() {
++        if (fd >= 0) {
++            close(fd);
++            fd = -1;
++        }
++        if (fgds_wrapper) {
++            delete fgds_wrapper;
++            fgds_wrapper = nullptr;
++        }
++    }
++
++    FgdsWrapper* fgds_wrapper = nullptr;
++    int device_id = -1;
++    int fd = -1;
++    std::string filename;
++    fgds_fileid fid;
++};
++
++// FGDS device buffer class
++class fgds_device_buffer {
++public:
++    fgds_device_buffer(const uintptr_t dev_ptr, const uint64_t length) {
++        _devPtr = dev_ptr;
++        _length = length;
++    }
++
++    uintptr_t get_base_address() const {
++        return _devPtr;
++    }
++
++    uint64_t get_length() const {
++        return _length;
++    }
++
++private:
++    uintptr_t _devPtr;
++    uint64_t _length;
++};
++
++// FGDS file reader class
++class fgds_file_reader {
++public:
++    fgds_file_reader(const int max_threads, int device_id) {
++        _max_threads = max_threads;
++        _device_id = device_id;
++        _threads = new std::thread*[max_threads];
++        for (int i = 0; i < max_threads; ++i) {
++            _threads[i] = nullptr;
++        }
++        _next_id = 0;
++    }
++
++    ~fgds_file_reader() {
++        if (_threads) {
++            for (int i = 0; i < _max_threads; ++i) {
++                if (_threads[i] != nullptr) {
++                    _threads[i]->join();
++                    delete _threads[i];
++                }
++            }
++            delete[] _threads;
++        }
++    }
++
++    const int submit_read(const fgds_file_handle& fh, const fgds_device_buffer& dst, const uint64_t offset, const uint64_t length, const uint64_t ptr_off) {
++        int id = _next_id++;
++        size_t thread_index = (size_t)(id % _max_threads);
++        if (_threads[thread_index] != nullptr) {
++            _threads[thread_index]->join();
++            delete _threads[thread_index];
++        }
++
++        _threads[thread_index] = new std::thread(_thread, id, fh.get_fd(), fh.get_device_id(), fh.get_wrapper(), _device_id, dst.get_base_address(), length, offset, ptr_off, &_results, &_result_lock);
++
++        return id;
++    }
++
++    const ssize_t wait_read(const int id) {
++        size_t thread_index = (size_t)(id % _max_threads);
++        if (_threads[thread_index] != nullptr) {
++            _threads[thread_index]->join();
++            delete _threads[thread_index];
++            _threads[thread_index] = nullptr;
++        }
++
++        std::lock_guard<std::mutex> guard(_result_lock);
++        ssize_t ret = _results[id];
++        _results.erase(id);
++        return ret;
++    }
++
++private:
++    static void _thread(int thread_id, int fd, int device_id, FgdsWrapper* wrapper, int reader_device_id, uintptr_t dev_ptr, uint64_t length, uint64_t offset, uint64_t ptr_off, std::map<int, ssize_t>* results, std::mutex* result_lock) {
++        ssize_t count = 0;
++        void* devPtr_base = reinterpret_cast<void*>(dev_ptr);
++
++        try {
++            count = wrapper->read(fd, device_id, devPtr_base, length, offset, ptr_off);
++            if (count < 0) {
++                std::fprintf(stderr, "fgds_file_reader._thread: fgds_read returned an error: count=%zd\n", count);
++            }
++        } catch (const std::exception& e) {
++            std::fprintf(stderr, "fgds_file_reader._thread: exception: %s\n", e.what());
++            count = -1;
++        }
++
++        std::lock_guard<std::mutex> guard(*result_lock);
++        (*results)[thread_id] = count;
++    }
++
++    int _max_threads;
++    int _device_id;
++    std::thread** _threads;
++    std::atomic<int> _next_id;
++    std::map<int, ssize_t> _results;
++    std::mutex _result_lock;
++};
++
++// Pybind11 bindings
++PYBIND11_MODULE(fgds_ext, m) {
++    m.doc() = "FGDS extension module";
++    py::class_<fgds_file_handle>(m, "fgds_file_handle")
++        .def(py::init<std::string, bool, int>())
++        .def("get_device_id", &fgds_file_handle::get_device_id);
++
++    py::class_<fgds_device_buffer>(m, "fgds_device_buffer")
++        .def(py::init<const uintptr_t, const uint64_t>())
++        .def("get_base_address", &fgds_device_buffer::get_base_address)
++        .def("get_length", &fgds_device_buffer::get_length);
++
++    py::class_<fgds_file_reader>(m, "fgds_file_reader")
++        .def(py::init<const int, int>())
++        .def("submit_read", &fgds_file_reader::submit_read)
++        .def("wait_read", &fgds_file_reader::wait_read);
++
++    // FGDS wrapper functions
++    m.def("fgds_regmem", [](int device_id, uintptr_t addr, size_t size, pybind11::object target_addr_obj) {
++        FgdsWrapper wrapper;
++        void* target_addr = nullptr;
++        int result = wrapper.regmem(device_id, addr, size, &target_addr);
++        return result;
++    });
++
++    m.def("fgds_deregmem", [](int device_id, uintptr_t addr, size_t size) {
++        FgdsWrapper wrapper;
++        return wrapper.deregmem(device_id, addr, size);
++    });
++
++    m.def("fgds_read", [](int fd, int device_id, void* buf, size_t length, off_t offset, size_t ptr_off) {
++        FgdsWrapper wrapper;
++        return wrapper.read(fd, device_id, buf, length, offset, ptr_off);
++    });
++
++    // FGDS device open/close functions
++    m.def("fgds_open", [](int device_id) {
++        FgdsWrapper wrapper;
++        return wrapper.open(device_id);
++    });
++
++    m.def("fgds_close", [](int device_id) {
++        FgdsWrapper wrapper;
++        return wrapper.close(device_id);
++    });
++
++    // Library management functions
++    m.def("fgds_load_library", &load_fgds_library);
++    m.def("fgds_close_library", &close_fgds_library);
++    m.def("fgds_is_initialized", &is_fgds_initialized);
++}
+diff --git a/fastsafetensors/cpp/fgds_ext.pyi b/fastsafetensors/cpp/fgds_ext.pyi
+new file mode 100644
+index 0000000..c9e2fe3
+--- /dev/null
++++ b/fastsafetensors/cpp/fgds_ext.pyi
+@@ -0,0 +1,21 @@
++# SPDX-License-Identifier: Apache-2.0
++
++from typing import Optional
++
++class fgds_file_handle:
++    def __init__(self, filename: str, o_direct: bool, device_id: int): ...
++    def get_device_id(self) -> int: ...
++
++class fgds_device_buffer:
++    def __init__(self, dev_ptr: int, length: int): ...
++    def get_base_address(self) -> int: ...
++    def get_length(self) -> int: ...
++
++class fgds_file_reader:
++    def __init__(self, max_threads: int, device_id: int): ...
++    def submit_read(self, fh: fgds_file_handle, dst: fgds_device_buffer, offset: int, length: int, ptr_off: int) -> int: ...
++    def wait_read(self, id: int) -> int: ...
++
++def fgds_regmem(device_id: int, addr: int, size: int, target_addr: Optional[int]) -> int: ...
++def fgds_deregmem(device_id: int, addr: int, size: int) -> int: ...
++def fgds_read(device_id: int, buf: int, length: int, offset: int, ptr_off: int) -> int: ...
+diff --git a/fastsafetensors/loader.py b/fastsafetensors/loader.py
+index 937c160..656fb7a 100644
+--- a/fastsafetensors/loader.py
++++ b/fastsafetensors/loader.py
+@@ -291,12 +291,13 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
+         framework="pytorch",
+         **kwargs,
+     ):
++        import os
+         self.framework = get_framework_op(framework)
+         self.pg = self.framework.get_process_group(pg)
+         self.device = self.framework.get_device(device, self.pg)
+ 
+         fstcpp.set_debug_log(debug_log)
+-
++        use_fgds = os.environ.get('USE_FGDS', '').lower() in ('true', '1', 'yes') and self.device != "cpu"
+         if not nogds:
+             if platform.system() == "Windows":
+                 copier_type = "dstorage"
+@@ -310,7 +311,7 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
+             # bounce-buffer nogds path.
+             copier_type = "unified"
+         else:
+-            copier_type = "nogds"
++            copier_type = "fgds" if use_fgds else "gds"  # Choose between FGDS and GDS
+         super().__init__(
+             pg,
+             self.device,
+diff --git a/setup.py b/setup.py
+index 8620f72..d5caf11 100644
+--- a/setup.py
++++ b/setup.py
+@@ -57,6 +57,12 @@ setup(
+             sources=["fastsafetensors/cpp/ext.cpp"],
+             include_dirs=["fastsafetensors/cpp"],
+             mod_name="cpp",
++        ),
++        MyExtension(
++            name=f"fastsafetensors.fgds_ext",
++            sources=["fastsafetensors/cpp/fgds_ext.cpp"],
++            include_dirs=["fastsafetensors/cpp"],
++            mod_name="fgds_ext",
+         )
+     ],
+ )
+-- 
+2.25.1
+

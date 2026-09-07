@@ -7,13 +7,16 @@ set (CMAKE_CUDA_STANDARD 20)
 set (CMAKE_CUDA_ARCHITECTURES 90)
 
 find_package (Threads REQUIRED)
-find_package (CUDA 12.4 REQUIRED)
-find_package (CUDAToolkit REQUIRED)
-find_library (CUFILE_LIBRARIES cufile ${CUDA_TOOLKIT_ROOT_DIR}/lib64)
+find_package (CUDAToolkit 12.4 REQUIRED)
+find_library (CUFILE_LIBRARIES cufile ${CUDAToolkit_LIBRARY_DIR})
 find_library (DL_LIB dl REQUIRED)
 
+# 动态链接系统 liburing：写入 libfgds.so 的 DT_NEEDED，供 Python 加载时自动解析。
+# 构建机需 liburing-devel（或 liburing-dev）；运行机需 liburing 运行时库。
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBURING REQUIRED liburing)
+pkg_check_modules(LIBURING REQUIRED IMPORTED_TARGET liburing)
+message(STATUS "liburing include dirs: ${LIBURING_INCLUDE_DIRS}")
+message(STATUS "liburing libraries: ${LIBURING_LINK_LIBRARIES}")
 
 set (NVIDIA "" CACHE PATH "Path to Nvidia driver source")
 set (KERNEL "/lib/modules/${CMAKE_SYSTEM_VERSION}/build" CACHE PATH "Path to kernel source, or module directory")
@@ -55,28 +58,16 @@ if (no_cc)
     set(CCUDA_NVCC_FLAGS "${CMAKE_C_FLAGS} -D__NO_COHERENCE__")
 endif ()
 
-# Detect system architecture for CUDA paths
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-    set(CUDA_ARCH_TARGET "sbsa-linux")
-    message(STATUS "Detected aarch64 architecture")
-elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
-    set(CUDA_ARCH_TARGET "x86_64-linux")
-    message(STATUS "Detected x86_64 architecture")
-else()
-    message(WARNING "Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}, defaulting to x86_64-linux")
-    set(CUDA_ARCH_TARGET "x86_64-linux")
-endif()
-
 include_directories ("${PROJECT_SOURCE_DIR}/libfgds/include"
-                    "${CUDA_TOOLKIT_ROOT_DIR}/targets/${CUDA_ARCH_TARGET}/include/")
+                    "${CUDAToolkit_INCLUDE_DIRS}")
 
 # Try to find Nvidia driver
-if (CUDA_FOUND AND NOT no_cuda)
+if (CUDAToolkit_FOUND AND NOT no_cuda)
 
     # Try to find Nvidia headers (will choose the newest version)
     file (GLOB_RECURSE driver_paths "/usr/src/nvidia-*/nv-reg.h")
     string (REPLACE "nv-reg.h" "" driver_paths "${driver_paths}")
-    message(STATUS, "driver path is ${driver_paths}")
+    message(STATUS "driver path is ${driver_paths}")
     if (driver_paths)
         list (REVERSE driver_paths)
     endif ()
@@ -153,7 +144,12 @@ file(GLOB libfgds_include "${libfgds_root}/include/*.h")
 
 add_library(libfgds ${libfgds_source} ${libfgds_include})
 set_target_properties (libfgds PROPERTIES OUTPUT_NAME "fgds")
-target_include_directories(libfgds PRIVATE "${libfgds_root}" CUDA::cudart)
+# PkgConfig::LIBURING（PUBLIC）：
+# 1) 编译 libfgds 时带上 liburing 头文件；
+# 2) 链接时写入 DT_NEEDED(liburing.so)，供 Python 加载 libfgds.so 时自动解析；
+# 3) 传递给依赖 libfgds 的目标（部分 benchmark 也直接调用了 io_uring API）。
+target_include_directories(libfgds PRIVATE "${libfgds_root}" "${libfgds_root}/include" CUDA::cudart)
+target_link_libraries(libfgds PUBLIC PkgConfig::LIBURING)
 # Set install locations
 install (FILES ${libfgds_include} DESTINATION "include")
 install (TARGETS libfgds DESTINATION "lib")
@@ -174,16 +170,16 @@ set (CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 # Set preferred ordering for sample targets
 # Make benchmark target
 # We assume all benchmarks are CUDA programs
-message(STATUS "liburing include dir: ${LIBURING_INCLUDE_DIRS}")
-message(STATUS "liburing library dir: ${LIBURING_LIBRARIES}")
 macro (make_benchmark target binary_name files)
 
     add_executable (${target}) # Ugly bugly
     target_sources (${target} PRIVATE ${files})
 
     add_dependencies (${target} libfgds)
-    target_include_directories(${target} PRIVATE ${benchmarks_utils} ${libfgds_root}/include ${LIBURING_INCLUDE_DIRS})
-    target_link_libraries (${target} libfgds ${CUFILE_LIBRARIES}  CUDA::cudart cuda ${LIBURING_LIBRARIES} ${DL_LIB} Threads::Threads)
+    # liburing 的 include/link 已由 libfgds PUBLIC PkgConfig::LIBURING 传递；
+    # 此处再显式链接一次，保证 benchmark 自身直接调用的 io_uring_* 也能正确解析。
+    target_include_directories(${target} PRIVATE ${benchmarks_utils} ${libfgds_root}/include)
+    target_link_libraries (${target} libfgds ${CUFILE_LIBRARIES} CUDA::cudart cuda PkgConfig::LIBURING ${DL_LIB} Threads::Threads)
     set_target_properties (${target} PROPERTIES OUTPUT_NAME "${binary_name}")
 
     list (APPEND benchmark_targets "${target}")
@@ -198,4 +194,5 @@ add_subdirectory ("${PROJECT_SOURCE_DIR}/benchmarks/micro-benchmarks")
 add_subdirectory ("${PROJECT_SOURCE_DIR}/benchmarks/safetensor")
 
 add_subdirectory ("${PROJECT_SOURCE_DIR}/example/")
+add_subdirectory ("${PROJECT_SOURCE_DIR}/tests/")
 

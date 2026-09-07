@@ -47,7 +47,7 @@ struct fgds_ctrl ctrl;
 #define NUM_THREADS 128
 #define MAX_GPUIDS 16
 
-u32 npu_num;
+u32 gpu_count;
 extern uint64_t gpu_info_table[MAX_GPU_DEVS];
 
 /* use_all_gpus=1: 使用所有 GPU; =0: 仅使用 gpuids 中指定索引的 GPU，如 gpuids=0,2 */
@@ -100,34 +100,35 @@ int extract_trailing_number(const char str[]) {
 	}
 }
 
-static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
+static int fgds_devm_memremap(struct fgds_dev *gpu_dev) {
 	int ret = 1;
 	struct dev_pagemap *pgmap;
 
-	phx_dev->p2p_pgmap = devm_kzalloc(&phx_dev->dev->dev,  //分配的是内核内存，这里指针的意思是关联了这个gpu，设备驱动卸载时内存会自动释放
+	gpu_dev->p2p_pgmap = devm_kzalloc(&gpu_dev->dev->dev,  //分配的是内核内存，这里指针的意思是关联了这个gpu，设备驱动卸载时内存会自动释放
 									sizeof(struct pci_p2pdma_pagemap), GFP_KERNEL);  //分配的是内核虚拟内存
-	if (phx_dev->p2p_pgmap == NULL)
+	if (gpu_dev->p2p_pgmap == NULL)
 		return -ENOMEM;
 
-	pgmap = &phx_dev->p2p_pgmap->pgmap;
-	pgmap->range.start = phx_dev->paddr;
-	pgmap->range.end = phx_dev->paddr + phx_dev->size - 1;
-	printk("npu->pgmap->res.start is %#llx, end is %#llx\n", pgmap->range.start,
+	pgmap = &gpu_dev->p2p_pgmap->pgmap;
+	pgmap->range.start = gpu_dev->paddr;
+	pgmap->range.end = gpu_dev->paddr + gpu_dev->size - 1;
+	printk("gpu->pgmap->res.start is %#llx, end is %#llx\n", pgmap->range.start,
 			pgmap->range.end);
 	pgmap->nr_range = 1;
 	// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
-	// 用MEMORY_DEVICE_PCI_P2PDMA时，跑example和micro.py会异常重启。改成MEMORY_DEVICE_GENERIC能正常跑，相比传统方式的读写性能仍有20%+的提升。
-	// todo:理论上应用MEMORY_DEVICE_PCI_P2PDMA,待排查处理。 @pengkunlun。
+	// 用MEMORY_DEVICE_PCI_P2PDMA时，跑example和micro.py会异常重启。改成MEMORY_DEVICE_GENERIC能正常跑，经测试验证，对性能的影响理论上不大。
+	// todo:理论上应用MEMORY_DEVICE_PCI_P2PDMA,待排查处理。
 	pgmap->type = MEMORY_DEVICE_GENERIC;
 
 	// 把GPU的PCIE Bar地址映射到内核的ZONE_DEVICE类型的虚拟内存，让内核可以访问gpu bar地址，并分配page来管理bar地址,达到统一地址管理的效果，例如支持dma和用户空间mmap这块内核虚拟内存。
-	phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
-	// printk("npu numa is %d\n", phx_dev->dev->dev.numa_node);
+	gpu_dev->pci_mem_va = devm_memremap_pages(&gpu_dev->dev->dev, pgmap);
+	// printk("gpu numa is %d\n", gpu_dev->dev->dev.numa_node);
 
-	if (IS_ERR_OR_NULL(phx_dev->pci_mem_va)) {
+	if (IS_ERR_OR_NULL(gpu_dev->pci_mem_va)) {
 		// devm_memremap_pages容易因为映射的bar地址范围中由于pat冲突导致失败。pat是x86才有的，这种问题在非x86架构下暂不考虑。且arm架构下跳过bar首部地址2MB容易出异常,导致调用fgds时机器异常重启。
+		// 查看机器上的pat属性冲突可通过 /sys/kernel/debug/x86/pat_memtype_list ，该文件需要先在机器上挂载debugfs才会有
 #if defined(CONFIG_X86) || defined(__x86_64__) || defined(__i386__)
-		// 经验规则：devm_memremap_pages的pat冲突，一般是发生在bar的首地址。在x86架构下尝试分别跳过BAR前2MB和4MB进行探测。但不能跳过8MB，否则调用fgds时机器会异常重启。
+		// 经验规则：devm_memremap_pages的pat冲突，一般是发生在bar的首地址。在x86架构下尝试分别跳过BAR前2、4、6MB进行探测。但不能跳过8MB，否则调用fgds时机器会异常重启。
 		printk("devm_memremap_pages fail! there is maybe a conflict in pat, should adjust the address mapping range of BAR.\n");
 
 		const int skip_sizes_mb[] = {2, 4, 6};
@@ -136,8 +137,8 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 
 		for (attempt = 0; attempt < num_attempts; ++attempt) {
 			resource_size_t skip_sz = (resource_size_t)skip_sizes_mb[attempt] * 1024 * 1024;
-			resource_size_t new_start = phx_dev->paddr + skip_sz;
-			resource_size_t new_size = phx_dev->size - skip_sz;
+			resource_size_t new_start = gpu_dev->paddr + skip_sz;
+			resource_size_t new_size = gpu_dev->size - skip_sz;
 			void __iomem *probe_addr = NULL;
 
 			if (new_size <= 0) {
@@ -164,37 +165,37 @@ static int fgds_devm_memremap(struct fgds_dev *phx_dev) {
 			printk("devm_memremap_pages try [%dMB skip from bar header], start=%#llx, end=%#llx\n",
 				skip_sizes_mb[attempt], pgmap->range.start, pgmap->range.end);
 
-			phx_dev->pci_mem_va = devm_memremap_pages(&phx_dev->dev->dev, pgmap);
+			gpu_dev->pci_mem_va = devm_memremap_pages(&gpu_dev->dev->dev, pgmap);
 
-			if (IS_ERR_OR_NULL(phx_dev->pci_mem_va)) {
+			if (IS_ERR_OR_NULL(gpu_dev->pci_mem_va)) {
 				printk("fgds: devm_memremap_pages after skipping %d MB still failed!\n", skip_sizes_mb[attempt]);
 				continue;
 			} else {
 				printk("fgds: devm_memremap_pages success on region after skipping %d MB, addr is %#lx\n",
-					skip_sizes_mb[attempt], (uintptr_t)phx_dev->pci_mem_va);
-				phx_dev->remap = 1;
-				phx_dev->paddr = new_start;
-				phx_dev->size = new_size;
+					skip_sizes_mb[attempt], (uintptr_t)gpu_dev->pci_mem_va);
+				gpu_dev->remap = 1;
+				gpu_dev->paddr = new_start;
+				gpu_dev->size = new_size;
 				return 0;
 			}
 		}
 		// 所有探测均失败，清理并返回错误
 		printk("fgds: devm_memremap_pages failed after all ioremap probes.\n");
-		devm_kfree(&phx_dev->dev->dev, phx_dev->p2p_pgmap);
-		phx_dev->p2p_pgmap = NULL;
+		devm_kfree(&gpu_dev->dev->dev, gpu_dev->p2p_pgmap);
+		gpu_dev->p2p_pgmap = NULL;
 		return -ENOMEM;
 #else
 		// 非x86架构，不进行探测，直接返回错误
 		printk("fgds: devm_memremap_pages failed and not x86 architecture, skipping probe. Not supported.\n");
-		devm_kfree(&phx_dev->dev->dev, phx_dev->p2p_pgmap);
-		phx_dev->p2p_pgmap = NULL;
+		devm_kfree(&gpu_dev->dev->dev, gpu_dev->p2p_pgmap);
+		gpu_dev->p2p_pgmap = NULL;
 		return -ENOMEM;
 #endif
 	}
 
-	printk("npu devm_memremap_pages success, addr is %#lx\n",
-			(uintptr_t)phx_dev->pci_mem_va);
-	phx_dev->remap = 1;
+	printk("gpu devm_memremap_pages success, addr is %#lx\n",
+			(uintptr_t)gpu_dev->pci_mem_va);
+	gpu_dev->remap = 1;
 	ret = 0;
 	return ret;
 }
@@ -227,35 +228,35 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
         // get the PCIe BAR information of each GPU device
 		bus = (gpu_info_table[i] >> 8) & 0xFF;
 		fn = gpu_info_table[i] & 0xFF;
-		dev_ctrl->phx_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
-		// printk("npu%u: pci_get_domain_bus_and_slot success, bus is %x, fn is %x\n", i, bus, fn);
-		if (dev_ctrl->phx_dev[i].dev == NULL) {
-			printk("npu%u: pci_get_domain_bus_and_slot failed\n", i);
+		dev_ctrl->gpu_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
+		// printk("gpu%u: pci_get_domain_bus_and_slot success, bus is %x, fn is %x\n", i, bus, fn);
+		if (dev_ctrl->gpu_dev[i].dev == NULL) {
+			printk("gpu%u: pci_get_domain_bus_and_slot failed\n", i);
 			return -1;
 		}
 		for (j = 0; j < PCI_STD_NUM_BARS; j++) {
-			size = pci_resource_len(dev_ctrl->phx_dev[i].dev, j);
+			size = pci_resource_len(dev_ctrl->gpu_dev[i].dev, j);
 			// 考虑打日志，输出每个bar区域的size和paddr
-			// printk("npu%u: bar%d size is 0x%llx, paddr is 0x%llx\n", i, j, size, pci_resource_start(dev_ctrl->phx_dev[i].dev, j));
-			if (size > dev_ctrl->phx_dev[i].size){
+			// printk("gpu%u: bar%d size is 0x%llx, paddr is 0x%llx\n", i, j, size, pci_resource_start(dev_ctrl->gpu_dev[i].dev, j));
+			if (size > dev_ctrl->gpu_dev[i].size){
 				// get the maximum BAR size for each GPU device, which is the size of the GPU memory
-				dev_ctrl->phx_dev[i].paddr = pci_resource_start(dev_ctrl->phx_dev[i].dev, j);
-				dev_ctrl->phx_dev[i].size = size;
+				dev_ctrl->gpu_dev[i].paddr = pci_resource_start(dev_ctrl->gpu_dev[i].dev, j);
+				dev_ctrl->gpu_dev[i].size = size;
 			}
 		}
-		dev_ctrl->phx_dev[i].idx = i;
-		dev_ctrl->phx_dev[i].remap = 0;
-		printk("npu%u: bus is %x, size is %llu, paddr is %#llx, try to remap bar memory to kernel space\n", i,
-			dev_ctrl->phx_dev[i].dev->bus->number, dev_ctrl->phx_dev[i].size,
-			dev_ctrl->phx_dev[i].paddr);
+		dev_ctrl->gpu_dev[i].idx = i;
+		dev_ctrl->gpu_dev[i].remap = 0;
+		printk("gpu%u: bus is %x, size is %llu, paddr is %#llx, try to remap bar memory to kernel space\n", i,
+			dev_ctrl->gpu_dev[i].dev->bus->number, dev_ctrl->gpu_dev[i].size,
+			dev_ctrl->gpu_dev[i].paddr);
 		
 		// remap the GPU device's BAR memory to the kernel space
-		ret = fgds_devm_memremap(&dev_ctrl->phx_dev[i]);
+		ret = fgds_devm_memremap(&dev_ctrl->gpu_dev[i]);
 		if (ret) {
 			/* remap 失败：fgds_devm_memremap 内部已 devm_kfree(p2p_pgmap)；此处仅释放 PCI 引用 */
-			printk("npu%u: fgds_devm_memremap failed, release PCI reference\n", i);
-			pci_dev_put(dev_ctrl->phx_dev[i].dev);
-			dev_ctrl->phx_dev[i].dev = NULL;
+			printk("gpu%u: fgds_devm_memremap failed, release PCI reference\n", i);
+			pci_dev_put(dev_ctrl->gpu_dev[i].dev);
+			dev_ctrl->gpu_dev[i].dev = NULL;
 		} else {
 			// 只要有至少一块GPU remap成功，就返回0，就加载内核模块成功
 			flag = 0;
@@ -276,18 +277,18 @@ static int fgds_open(struct inode *inode, struct file *filp) {
 
 	if (file_name != NULL) {
 		dev_idx = extract_trailing_number(file_name);
-		printk("fgds_open %s, npu_idx is %d\n", file_name, dev_idx);
+		printk("fgds_open %s, gpu_idx is %d\n", file_name, dev_idx);
 		if (dev_idx < 0 || dev_idx >= ctrl.dev_num) {
 			ret = -1;
 			goto out;
 		}
 		/* 仅允许打开 remap 成功的设备 */
-		if (!ctrl.phx_dev[dev_idx].remap) {
+		if (!ctrl.gpu_dev[dev_idx].remap) {
 			ret = -ENODEV;
 			goto out;
 		}
 		// save the device metadata in the file structure
-		filp->private_data = &ctrl.phx_dev[dev_idx];
+		filp->private_data = &ctrl.gpu_dev[dev_idx];
 	}
 out:
 	printk("fgds_open %d\n", ret);
@@ -314,16 +315,16 @@ static long fgds_ioctl(struct file *filp, unsigned int cmd,
 			struct fgds_ioctl_map_s map_param;
 			if (copy_from_user(&map_param, argp, sizeof(struct fgds_ioctl_map_s)))
 				return -EFAULT;
-			return fgds_map_dev_addr(&map_param, map_param.n_vaddr, map_param.n_size,
-									map_param.c_vaddr, map_param.c_size);
+			return fgds_map_dev_addr(&map_param, map_param.gpu_addr, map_param.gpu_addr_size,
+									map_param.host_vaddr, map_param.host_vaddr_size);
 		}
 		// unmap and clean up the device address mapping
 		case FGDS_IOCTL_UNMAP: {
 			struct fgds_ioctl_map_s map_param;
 			if (copy_from_user(&map_param, argp, sizeof(struct fgds_ioctl_map_s)))
 				return -EFAULT;
-			fgds_map_dev_release(&map_param, map_param.n_vaddr, map_param.n_size,
-								map_param.c_vaddr, map_param.c_size);
+			fgds_map_dev_release(&map_param, map_param.gpu_addr, map_param.gpu_addr_size,
+								map_param.host_vaddr, map_param.host_vaddr_size);
 			return 0;
 		}
 		default:
@@ -384,7 +385,7 @@ int fgds_cdev_add(struct cdev *cdev, struct device *cdev_device,
 	cdev->owner = owner;
 	ret = cdev_device_add(cdev, cdev_device);
 	//if (ret)
-	//	ida_simple_remove(&phxfs_chr_minor_ida, dev->idx);
+	//	ida_simple_remove(&fgds_chr_minor_ida, dev->idx);
 	return ret;
 }
 
@@ -409,13 +410,13 @@ int fgds_cdev_init(struct fgds_ctrl *ctrl) {
 			continue;
 		}
 		/* 仅对 remap 成功的 GPU 创建字符设备 */
-		if (!ctrl->phx_dev[i].remap) {
+		if (!ctrl->gpu_dev[i].remap) {
 			continue;
 		}
-		ret = fgds_cdev_add(&ctrl->phx_dev[i].cdev, &ctrl->phx_dev[i].device,
-							&fgds_chr_fops, THIS_MODULE, &ctrl->phx_dev[i]);
+		ret = fgds_cdev_add(&ctrl->gpu_dev[i].cdev, &ctrl->gpu_dev[i].device,
+							&fgds_chr_fops, THIS_MODULE, &ctrl->gpu_dev[i]);
 		if (ret) {
-		kfree_const(ctrl->phx_dev[i].device.kobj.name);
+		kfree_const(ctrl->gpu_dev[i].device.kobj.name);
 		goto unregister_generic_fgds;
 		}
 		printk("fgds_cdev_init device:%d success!\n", i);
@@ -446,26 +447,26 @@ static int __init fgds_init(void) {
 
 	// Initialize the GPU information table
 	nvfs_fill_gpu2peer_distance_table_once();
-	npu_num = 0;
+	gpu_count = 0;
 	for (i = 0; i < MAX_DEV_NUM; i++) {
 		if (gpu_info_table[i] != 0) {
-			npu_num++;
+			gpu_count++;
 		} else {
 			break;
 		}
 	}
 
-	printk("devdrv_get_devnum num:%d\n", npu_num);
+	printk("fgds_gpu_count num:%d\n", gpu_count);
 
-	if (npu_num <= 0 || npu_num > MAX_DEV_NUM) {
-		printk("devdrv_get_devnum error:%u\n", npu_num);
+	if (gpu_count <= 0 || gpu_count > MAX_DEV_NUM) {
+		printk("fgds_gpu_count error:%u\n", gpu_count);
 		return -1;
 	}
     // obtain the PCIe BAR information of each GPU device via the PCIe bus
     // and remap the GPU device's BAR memory to the kernel space.
-	ret = fgds_ctrl_init(&ctrl, npu_num);
+	ret = fgds_ctrl_init(&ctrl, gpu_count);
 	if (ret != 0) {
-		printk("npu_ctrl_init error:%d\n", ret);
+		printk("fgds_ctrl_init error:%d\n", ret);
 		return -1;
 	}
 
@@ -489,15 +490,15 @@ static void __exit fgds_exit(void) {
 	int i;
 	/* 仅释放加载时 fgds_devm_memremap 成功的 GPU 的资源；失败的 GPU 不调用 fgds_cdev_del */
 	for (i = 0; i < ctrl.dev_num; i++) {
-		if (!ctrl.phx_dev[i].remap) {
+		if (!ctrl.gpu_dev[i].remap) {
 			/* remap 失败的 GPU：仅释放 PCI 引用 */
-			if (ctrl.phx_dev[i].dev) {
-				pci_dev_put(ctrl.phx_dev[i].dev);
-				ctrl.phx_dev[i].dev = NULL;
+			if (ctrl.gpu_dev[i].dev) {
+				pci_dev_put(ctrl.gpu_dev[i].dev);
+				ctrl.gpu_dev[i].dev = NULL;
 			}
 			continue;
 		}
-		fgds_cdev_del(&ctrl.phx_dev[i].cdev, &ctrl.phx_dev[i].device, &ctrl.phx_dev[i]);
+		fgds_cdev_del(&ctrl.gpu_dev[i].cdev, &ctrl.gpu_dev[i].device, &ctrl.gpu_dev[i]);
 	}
 
 	// delete nvidia_p2p symbols
@@ -516,5 +517,5 @@ module_exit(fgds_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("qiushi <qiushijsxs@outlook.com>");
-MODULE_DESCRIPTION("NPU/NVIDIA direct storgae");
+MODULE_DESCRIPTION("NVIDIA GPU Direct Storage");
 MODULE_VERSION("0.0.1");

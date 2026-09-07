@@ -1,5 +1,5 @@
-#ifndef __GDS_TEST_H__
-#define __GDS_TEST_H__
+#ifndef FGDS_UTILS_H
+#define FGDS_UTILS_H
 
 #include <cstdint>
 #include <cstdio>
@@ -61,15 +61,15 @@
         std::cerr << msg << std::endl; \
     } while(0)
 
-enum gds_op{
+enum io_op{
     OP_READ = 0,
     OP_WRITE = 1
 };
 
 enum xfer_mode{
-    GPUD_WITHOUT_PHONY_BUFFER = 0,
-    GPUD_WITH_PYONY_BUFFER = 1,
-    GPUD_WITH_CPU_BUFFER = 2,
+    GPUD_MODE_FGDS = 0,
+    GPUD_MODE_GDS = 1,
+    GPUD_MODE_POSIX = 2,
     END
 };
 
@@ -77,13 +77,13 @@ typedef struct{
     bool mode;
     int async;
     char *file_path;
-    size_t length;
+    size_t length; // 要读写的总数据量
     size_t io_size;
     int io_depth;
     int gpu_id;
     int num_threads;
     int xfer_mode;
-}GDSOpts;
+}BenchmarkOpts;
 
 typedef struct {
     int thread_id;
@@ -91,7 +91,7 @@ typedef struct {
     int mode;
     int fd;
     off_t offset;
-    size_t size;
+    size_t size; // 每个线程分别要读写的数据量
     size_t io_size;
     size_t depth;
     size_t batch_size;
@@ -110,7 +110,7 @@ typedef struct {
 typedef struct{
     pthread_t thread;
     ThreadData data;
-} GDSThread;
+} BenchmarkThread;
 
 typedef struct io_args_s{
     void *devPtr;
@@ -122,7 +122,7 @@ typedef struct io_args_s{
     cudaEvent_t end;
 } io_args_t;
 
-static inline void thread_prep(GDSThread *threads, int num_threads){
+static inline void thread_prep(BenchmarkThread *threads, int num_threads){
     for (int i = 0;i < num_threads; i ++){
         ThreadData *data = &threads[i].data;
         data->thread_id = i;
@@ -143,8 +143,8 @@ static inline void thread_prep(GDSThread *threads, int num_threads){
     }
 }
 
-static inline void infoGDSOpts(const GDSOpts& opts) {
-    std::cout << "GDSOpts:" << std::endl;
+static inline void infoBenchmarkOpts(const BenchmarkOpts& opts) {
+    std::cout << "BenchmarkOpts:" << std::endl;
     std::cout << "  mode: " << opts.mode << std::endl;
     std::cout << "  async: " << opts.async << std::endl;
     std::cout << "  file_path: " << (opts.file_path ? opts.file_path : "null") << std::endl;
@@ -209,7 +209,7 @@ static inline ssize_t get_size(std::string optarg){
     return std::stoull(optarg) * multiplier;
 }
 
-static inline bool parseOpts(int argc, char *argv[], GDSOpts &args) {
+static inline bool parseOpts(int argc, char *argv[], BenchmarkOpts &args) {
     int opt;
     static struct option long_options[] = {
         {"mode", required_argument, nullptr, 'm'},
@@ -268,7 +268,7 @@ static inline bool parseOpts(int argc, char *argv[], GDSOpts &args) {
         return false;
     }
 
-    infoGDSOpts(args);
+    infoBenchmarkOpts(args);
 
     return true;
 }
@@ -299,8 +299,8 @@ static inline void get_percentile(std::vector<uint64_t> &latency_vec){
     }
 }
 
-int run_gds(GDSOpts opts);
-int run_fgds(GDSOpts opts);
-int run_posix(GDSOpts opts);
+int run_gds(BenchmarkOpts opts);
+int run_fgds(BenchmarkOpts opts);
+int run_posix(BenchmarkOpts opts);
 
 #endif

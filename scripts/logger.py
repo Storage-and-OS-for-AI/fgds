@@ -51,7 +51,7 @@ def init_logger():
     console_handler.setLevel(log_level)
     console_handler.setFormatter(color_formatter)
 
-    logger = logging.getLogger("nds")
+    logger = logging.getLogger("fgds")
     logger.setLevel(log_level)
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)

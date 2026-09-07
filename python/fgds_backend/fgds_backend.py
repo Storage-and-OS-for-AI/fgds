@@ -1,11 +1,13 @@
 """
-Copyright (C), 2025-2026, KylinSoft. Co., Ltd.
+Copyright (c) 2025-2026 KylinSoft Co., Ltd.
+
+SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,7 +17,6 @@ limitations under the License.
 
 """
 
-# SPDX-License-Identifier: Apache-2.0
 # Standard
 import copy
 from collections import OrderedDict
@@ -197,8 +198,8 @@ def rand_suffix(rand, n: int):
     )
 
 
-async def save_metadata(path: str, tmp: str, metadata: bytes):
-    tmp_path = path + tmp
+async def save_metadata(path: str, tmp_suffix: str, metadata: bytes):
+    tmp_path = path + tmp_suffix
     async with aiofile.async_open(tmp_path, "wb") as f:
         await f.write(metadata)
     os.rename(tmp_path, path)
@@ -225,10 +226,10 @@ class FgdsBackend(AllocatorBackendInterface):
     Originally based on the open sourced WekaGDSBackend, this is a backend that
     leverages NVIDIA's cuFile API to issue GDS requests directly to the
     GDS-supported remote filesystem.  In order to use it, users need to specify
-    `phx_path` and `cufile_buffer_size` in their LMCache config.
+    `fgds_path` and `cufile_buffer_size` in their LMCache config.
 
     Cache Directory Structure created by this Backend:
-    /{phx_path}/{first_level}/{second_level}/{data & metadata} This structure
+    /{fgds_path}/{first_level}/{second_level}/{data & metadata} This structure
     is semi-arbitrary. We create two levels in the directory hierarchy to
     parallelize loading the data during initialization in the Python code.
 
@@ -255,14 +256,14 @@ class FgdsBackend(AllocatorBackendInterface):
         device_list = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
         self.device_id = int(device_list.split(",")[device_idx])
 
-        assert config.phx_path is not None, "Need to specify phx_path for FgdsBackend"
-        self.phx_path = config.phx_path
-        self.fstype = get_fstype(config.phx_path)
+        assert config.fgds_path is not None, "Need to specify fgds_path for FgdsBackend"
+        self.fgds_path = config.fgds_path
+        self.fstype = get_fstype(config.fgds_path)
 
         # Log the fstype - this is useful in reports and varying optimizations
         # based on the kind of fstype used.
         logger.info(
-            f"Fgds backend using fstype '{self.fstype}' on path '{self.phx_path}'"
+            f"Fgds backend using fstype '{self.fstype}' on path '{self.fgds_path}'"
         )
 
         self.use_fgds = True
@@ -308,13 +309,13 @@ class FgdsBackend(AllocatorBackendInterface):
             if use_direct_io is not None:
                 self.use_direct_io = use_direct_io
 
-        if not os.path.exists(self.phx_path):
-            os.makedirs(self.phx_path, exist_ok=True)
+        if not os.path.exists(self.fgds_path):
+            os.makedirs(self.fgds_path, exist_ok=True)
 
         self.stats = None  # TODO: plug into LMCache Statistics
 
-        self.hot_lock = threading.Lock()
-        self.hot_cache: OrderedDict[CacheEngineKey, DiskCacheMetadata] = OrderedDict()
+        self.metadata_cache_lock = threading.Lock()
+        self.metadata_cache: OrderedDict[CacheEngineKey, DiskCacheMetadata] = OrderedDict()
         self.metadata_dirs: set[str] = set()
 
         self.put_lock = threading.Lock()
@@ -324,10 +325,10 @@ class FgdsBackend(AllocatorBackendInterface):
 
         if hasattr(self.memory_allocator, "base_pointer"):
             logger.debug(f"Using base pointer {self.memory_allocator.base_pointer}")
-            self.cufile_base_pointer = self.memory_allocator.base_pointer
+            self.fgds_base_pointer = self.memory_allocator.base_pointer
         else:
             logger.info("No base pointer found, cufile will use bounce buffers")
-            self.cufile_base_pointer = None
+            self.fgds_base_pointer = None
         asyncio.run_coroutine_threadsafe(self._scan_metadata(), self.loop)
         self.save_metadata_tasks: set[asyncio.Task] = set()
 
@@ -337,38 +338,38 @@ class FgdsBackend(AllocatorBackendInterface):
         # whether we can serialize meta-data in groups for faster loading.
         tasks = []
         start = time.perf_counter()
-        with os.scandir(self.phx_path) as it:
+        with os.scandir(self.fgds_path) as it:
             for entry in it:
                 if not entry.is_dir():
                     continue
-                l1_dir = os.path.basename(entry.name)
-                if len(l1_dir) != 2:
+                level1_dir = os.path.basename(entry.name)
+                if len(level1_dir) != 2:
                     continue
                 tasks.append(
                     asyncio.to_thread(
                         self._scan_metadata_subdir,
-                        os.path.join(self.phx_path, l1_dir),
-                        l1_dir,
+                        os.path.join(self.fgds_path, level1_dir),
+                        level1_dir,
                     )
                 )
         # TODO: If Python 3.11+, can we use TaskGroup instead?
         await asyncio.gather(*tasks)
         end = time.perf_counter()
         logger.info(
-            f"Read {len(self.hot_cache)} cache entries from persistent "
+            f"Read {len(self.metadata_cache)} cache entries from persistent "
             f"storage in {end - start:.2f} seconds"
         )
 
-    def _scan_metadata_subdir(self, path, l1_dir):
+    def _scan_metadata_subdir(self, path, level1_dir):
         target_suffix = _DATA_FILE_SUFFIX + _METADATA_FILE_SUFFIX
         with os.scandir(path) as it:
             for entry in it:
                 if not entry.is_dir():
                     continue
-                l2_dir = os.path.basename(entry.name)
-                if len(l2_dir) != 2:
+                level2_dir = os.path.basename(entry.name)
+                if len(level2_dir) != 2:
                     continue
-                with os.scandir(os.path.join(path, l2_dir)) as it2:
+                with os.scandir(os.path.join(path, level2_dir)) as it2:
                     for fentry in it2:
                         if not fentry.is_file():
                             continue
@@ -385,7 +386,7 @@ class FgdsBackend(AllocatorBackendInterface):
                             )
                             continue
                         try:
-                            self._read_metadata(key, fentry.path, l1_dir + l2_dir)
+                            self._read_metadata(key, fentry.path, level1_dir + level2_dir)
                         except UnsupportedMetadataVersion:
                             logger.error(
                                 "Unsupported metadata version for "
@@ -415,9 +416,9 @@ class FgdsBackend(AllocatorBackendInterface):
             None,
             fmt,
         )
-        with self.hot_lock:
+        with self.metadata_cache_lock:
             self.metadata_dirs.add(subdir_key)
-            self.hot_cache[key] = metadata
+            self.metadata_cache[key] = metadata
         return metadata
 
     def __str__(self):
@@ -425,8 +426,8 @@ class FgdsBackend(AllocatorBackendInterface):
 
     def contains(self, key: CacheEngineKey, pin: bool = False) -> bool:
         # TODO: implement pin() semantics
-        with self.hot_lock:
-            res = key in self.hot_cache
+        with self.metadata_cache_lock:
+            res = key in self.metadata_cache
         if res:
             return True
         if self._try_to_read_metadata(key):
@@ -448,20 +449,20 @@ class FgdsBackend(AllocatorBackendInterface):
         key: CacheEngineKey,
     ) -> Tuple[str, str, str, str]:
         hash = str(key.chunk_hash)
-        l1_dir = hash[:2]
-        l2_dir = hash[2:4]
+        level1_dir = hash[:2]
+        level2_dir = hash[2:4]
         key_str = key.to_string()
         assert "_" not in key_str, "key string should not contain `_`"
         return (
             os.path.join(
-                self.phx_path,
-                l1_dir,
-                l2_dir,
+                self.fgds_path,
+                level1_dir,
+                level2_dir,
                 key_str.replace("/", "_") + _DATA_FILE_SUFFIX,
             ),
-            l1_dir + l2_dir,
-            l1_dir,
-            l2_dir,
+            level1_dir + level2_dir,
+            level1_dir,
+            level2_dir,
         )
 
     def exists_in_put_tasks(self, key: CacheEngineKey) -> bool:
@@ -502,22 +503,22 @@ class FgdsBackend(AllocatorBackendInterface):
         """
         kv_chunk = memory_obj.tensor
         assert kv_chunk is not None
-        path, subdir_key, l1_dir, l2_dir = self._key_to_path(key)
+        path, subdir_key, level1_dir, level2_dir = self._key_to_path(key)
         # TODO: maybe remove `metadata_dirs` and insert mkdir calls
         # only for the case where creating the CuFile fails on ENOENT. It
         # also makes the code more resilient to out-of-band deletions
         if subdir_key not in self.metadata_dirs:
-            os.makedirs(os.path.join(self.phx_path, l1_dir, l2_dir), exist_ok=True)
+            os.makedirs(os.path.join(self.fgds_path, level1_dir, level2_dir), exist_ok=True)
             self.metadata_dirs.add(subdir_key)
-        tmp = ".tmp" + rand_suffix(self.rand, 8)
+        tmp_suffix = ".tmp" + rand_suffix(self.rand, 8)
         fmt = memory_obj.metadata.fmt
         metadata = await asyncio.to_thread(
             self._save_gds,
             path,
-            tmp,
+            tmp_suffix,
             kv_chunk,
             fmt,
-            self.cufile_base_pointer,
+            self.fgds_base_pointer,
             memory_obj.metadata.address,
         )
 
@@ -526,11 +527,11 @@ class FgdsBackend(AllocatorBackendInterface):
             f"to {path} with metadata {metadata}")
 
         self.insert_key(key, memory_obj)
-        entry = self.hot_cache.get(key)
+        entry = self.metadata_cache.get(key)
         memory_obj.ref_count_down()
 
         task = asyncio.create_task(
-            save_metadata(path + _METADATA_FILE_SUFFIX, tmp, metadata)
+            save_metadata(path + _METADATA_FILE_SUFFIX, tmp_suffix, metadata)
         )
         self.save_metadata_tasks.add(task)
         task.add_done_callback(self.save_metadata_tasks.discard)
@@ -543,16 +544,16 @@ class FgdsBackend(AllocatorBackendInterface):
         shape = memory_obj.metadata.shape
         dtype = memory_obj.metadata.dtype
         fmt = memory_obj.metadata.fmt
-        with self.hot_lock:
+        with self.metadata_cache_lock:
             # TODO(Jiayi): need to support `cached_positions`.
-            self.hot_cache[key] = DiskCacheMetadata(path, size, shape, dtype, None, fmt)
+            self.metadata_cache[key] = DiskCacheMetadata(path, size, shape, dtype, None, fmt)
 
     def submit_prefetch_task(
         self,
         key: CacheEngineKey,
     ) -> bool:
-        # with self.hot_lock:
-        #     entry = self.hot_cache.get(key)
+        # with self.metadata_cache_lock:
+        #     entry = self.metadata_cache.get(key)
         # if entry is None:
         #     return None
 
@@ -586,8 +587,8 @@ class FgdsBackend(AllocatorBackendInterface):
         self,
         key: CacheEngineKey,
     ) -> Optional[MemoryObj]:
-        with self.hot_lock:
-            entry = self.hot_cache.get(key)
+        with self.metadata_cache_lock:
+            entry = self.metadata_cache.get(key)
             entry.fmt = MemoryFormat.KV_2LTD
         if entry is None:
             return None
@@ -622,11 +623,11 @@ class FgdsBackend(AllocatorBackendInterface):
         assert torch.device(self.dst_device) == torch.device(memory_obj.tensor.device)
 
         offset = _METADATA_MAX_SIZE
-        if self.cufile_base_pointer is None:
+        if self.fgds_base_pointer is None:
             addr = ctypes.c_void_p(memory_obj.tensor.data_ptr())
             dev_offset = 0
         else:
-            addr = ctypes.c_void_p(self.cufile_base_pointer)
+            addr = ctypes.c_void_p(self.fgds_base_pointer)
             dev_offset = memory_obj.metadata.address
         ret = self._load_gds(path, offset, addr, memory_obj.get_size(), dev_offset)
         if ret != memory_obj.get_size():
@@ -634,8 +635,8 @@ class FgdsBackend(AllocatorBackendInterface):
                 logger.error(
                     f"Error loading {path}: ret: {ret} removing entry from cache"
                 )
-                with self.hot_lock:
-                    self.hot_cache.pop(key)
+                with self.metadata_cache_lock:
+                    self.metadata_cache.pop(key)
             else:
                 # TODO: we should probably count errors and
                 # remove the entry if it's a persistent problem.
@@ -662,7 +663,7 @@ class FgdsBackend(AllocatorBackendInterface):
     def _save_gds(
         self,
         path: str,
-        tmp: str,
+        tmp_suffix: str,
         kv_chunk: torch.Tensor,
         fmt: MemoryFormat,
         base_pointer: int,
@@ -674,7 +675,7 @@ class FgdsBackend(AllocatorBackendInterface):
         else:
             addr = ctypes.c_void_p(base_pointer)
             dev_offset = device_offset
-        tmp_path = path + tmp
+        tmp_path = path + tmp_suffix
         offset = _METADATA_MAX_SIZE
         # TODO: We can add the chunk's metadata here, e.g. Tensor parallelism shard
         # and pipeline parallelism index.
@@ -726,7 +727,7 @@ class FgdsBackend(AllocatorBackendInterface):
 
     def _load_gds(
         self,
-        phx_path: str,
+        file_path: str,
         file_offset: int,
         gpu_pointer: ctypes.c_void_p,
         size_in_bytes: int,
@@ -735,7 +736,7 @@ class FgdsBackend(AllocatorBackendInterface):
         # Read data from disk into a GPU buffer
         if self.fgds:
             with self.fgds.Fgds(
-                phx_path, "r", use_direct_io=self.use_direct_io, device_id=self.device_id
+                file_path, "r", use_direct_io=self.use_direct_io, device_id=self.device_id
             ) as f:
                 start = time.time()
                 r = f.read(
@@ -748,7 +749,7 @@ class FgdsBackend(AllocatorBackendInterface):
                 logger.info(f"read data take {load_du:.6f}s")
                 return r
         elif self.cudart:
-            fd = os.open(phx_path, os.O_RDONLY)
+            fd = os.open(file_path, os.O_RDONLY)
             file_size = os.fstat(fd).st_size
             mm = mmap.mmap(
                 fd,
@@ -794,8 +795,8 @@ class FgdsBackend(AllocatorBackendInterface):
 
     def initialize_allocator(self, config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata
      ) -> FgdsMemoryAllocator:
-        assert config.phx_buffer_size is not None
-        return FgdsMemoryAllocator(config.phx_buffer_size * 1024**2, device=self.dst_device)
+        assert config.fgds_buffer_size is not None
+        return FgdsMemoryAllocator(config.fgds_buffer_size * 1024**2, device=self.dst_device)
 
     def allocate(
         self,

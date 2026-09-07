@@ -1,11 +1,13 @@
 """
-Copyright (C), 2025-2026, KylinSoft. Co., Ltd.
+Copyright (c) 2025-2026 KylinSoft Co., Ltd.
+
+SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,9 +31,10 @@ setup(
     url='https://github.com/Storage-and-OS-for-AI/fgds',
     classifiers=[
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.10',
         'License :: OSI Approved :: Apache Software License',
         'Operating System :: OS Independent',
     ],
-    python_requires='>=3.7',
+    python_requires='>=3.10',
 )
 

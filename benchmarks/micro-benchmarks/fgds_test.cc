@@ -81,7 +81,7 @@ static void *async_thread(void *arg) {
             }
 
             if (internal_bytes != data->io_size){
-                pr_error("fgds_xfer_addr faild");
+                pr_error("fgds_xfer_addr failed");
             }
             io_uring_submit(data->ring);
         }
@@ -216,8 +216,8 @@ static void *batch_thread(void *arg) {
     ssize_t io_size = (ssize_t)data->io_size;
     unsigned nr_completed = 0;
 
-    unsigned long long chuck_size = data->size / data->depth;
-    unsigned long long chuck_done_size = 0;
+    unsigned long long chunk_size = data->size / data->depth;
+    unsigned long long chunk_done_size = 0;
 
     
     int ret;
@@ -229,7 +229,7 @@ static void *batch_thread(void *arg) {
         
         clock_gettime(CLOCK_MONOTONIC, &io_start);
         for (i = 0 ; i < data->depth; i++){
-            if (chuck_done_size + (ssize_t)data->io_size  > chuck_size){
+            if (chunk_done_size + (ssize_t)data->io_size  > chunk_size){
                 pr_debug("out of range");
                 break;
             }
@@ -240,7 +240,7 @@ static void *batch_thread(void *arg) {
             }
             // 针对GPU地址进行转换
             xfer_addr = fgds_do_xfer_addr(fid.deviceID, data->gpu_buffer,
-                                        chuck_done_size + i * chuck_size,
+                                        chunk_done_size + i * chunk_size,
                                         data->io_size);
             internal_bytes = 0;
             for (j = 0; j < xfer_addr->nr_xfer_addrs; j++){
@@ -255,7 +255,7 @@ static void *batch_thread(void *arg) {
             }
 
             if (internal_bytes != data->io_size){
-                pr_error("fgds_xfer_addr faild");
+                pr_error("fgds_xfer_addr failed");
             }
         }
         pending = i;
@@ -270,7 +270,7 @@ static void *batch_thread(void *arg) {
             io_uring_cqe_seen(data->ring, cqe);
             nr_completed ++;
         }
-        chuck_done_size += data->io_size;
+        chunk_done_size += data->io_size;
         nr_completed = 0;
         clock_gettime(CLOCK_MONOTONIC, &io_end);
         done_bytes += data->io_size * pending;
@@ -329,51 +329,41 @@ static void *sync_read_thread(void *arg){
     ssize_t io_size = (ssize_t)data->io_size;
     size_t done_bytes = 0;
     u64 io_time = 0;
-    int repeated = 1;
 
     fid = (fgds_fileid_t){
         .fd = data->fd,
         .deviceID = data->device_id
     };
 
-    repeated = data->size / data->io_size;
-    if (data->size / data->io_size < 1000){
-        repeated = 1000 / (data->size / data->io_size) + 1;
-    } else {
-        repeated = 1;
-    }
-     
+    pr_info(__func__);
+    pr_info("sync_read_thread, don't use repeated");
     clock_gettime(CLOCK_MONOTONIC, &data->start_time);
-    for (int i = 0; i < repeated; i++){
-        done_bytes = 0;
-        while (done_bytes < data->size) {
-            clock_gettime(CLOCK_MONOTONIC, &io_start);
-            ssize_t result = fgds_read(fid, data->gpu_buffer, 
-                done_bytes, data->io_size, data->offset + done_bytes);
-            if (result == 0) {
-                // End of file reached
-                break;
-            }
-            if (result != io_size) {
-                printf("read_thread error, result is %lu, size is %lu\n",result, data->io_size);
-                return NULL;
-            }
-            clock_gettime(CLOCK_MONOTONIC, &io_end);
-            io_time = (io_end.tv_sec - io_start.tv_sec) * 1000000000LL + (io_end.tv_nsec - io_start.tv_nsec);;
-            data->latency_vec.push_back(io_time);
-            data->total_io_time += io_time;
-            data->io_operations++;
-            done_bytes += result;
+    while (done_bytes < data->size) {
+        clock_gettime(CLOCK_MONOTONIC, &io_start);
+        ssize_t result = fgds_read(fid, data->gpu_buffer,
+            done_bytes, data->io_size, data->offset + done_bytes);
+        if (result == 0) {
+            break;
         }
+        if (result != io_size) {
+            printf("read_thread error, result is %lu, size is %lu\n", result, data->io_size);
+            return NULL;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &io_end);
+        io_time = (io_end.tv_sec - io_start.tv_sec) * 1000000000LL + (io_end.tv_nsec - io_start.tv_nsec);
+        data->latency_vec.push_back(io_time);
+        data->total_io_time += io_time;
+        data->io_operations++;
+        done_bytes += result;
     }
     clock_gettime(CLOCK_MONOTONIC, &data->end_time);
     return NULL;
 }
 
 
-int run_fgds(GDSOpts opts){
+int run_fgds(BenchmarkOpts opts){
     struct timespec prog_start, prog_end;
-    GDSThread *threads;
+    BenchmarkThread *threads;
     size_t chunk_size;
     fgds_fileid_t fid;
     std::vector<uint64_t> latency_vec;
@@ -388,7 +378,7 @@ int run_fgds(GDSOpts opts){
         {batch_thread, batch_thread},
         {async_thread_stream, async_thread_stream}};
 
-    threads = new GDSThread[opts.num_threads];
+    threads = new BenchmarkThread[opts.num_threads];
     thread_prep(threads, opts.num_threads);
 
     file_fd = open(opts.file_path,  O_CREAT | O_RDWR | O_DIRECT, 0644);

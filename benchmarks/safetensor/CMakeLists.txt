@@ -1,6 +1,5 @@
 cmake_minimum_required (VERSION 3.18)
 project (libfgds-benchmarks)
-find_package (CUDA 12.4 REQUIRED)
 
 file(GLOB safetensor_src "${benchmarks_root}/safetensor/*.cc")
 

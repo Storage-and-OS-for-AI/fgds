@@ -114,7 +114,7 @@ struct p2p_vmap
     struct page **pages;
     unsigned long       page_size;      /* Logical page size */
     void*    data;           /* Custom data gpu_region */
-    unsigned long       n_addrs;        /* Number of mapped pages */
+    unsigned long       dev_page_num;        /* Number of mapped pages */
     uint64_t            addrs[1];       /* Bus addresses */
 };
 
@@ -123,10 +123,10 @@ struct gpu_dev_info
     struct pci_dev *pci_dev;
     struct device* nvfs_device; // cdev
     struct dev_pagemap *pgmap;
-    u64 pci_bar_strat;
+    u64 pci_bar_start;
     u64 pci_mem_len;
     void __iomem  *pci_mem_va; //get from devm_memremap_pages
-    bool remaped;
+    bool remapped;
     int vmap_num;
     struct p2p_vmap **mvmap;
 
@@ -141,7 +141,7 @@ struct nvfs_ioctl_map_s {
     u64    cpuvaddr;		// Shadow buffer address
     u64    gpuvaddr;		// GPU Buffer address
     u64    end_fence_addr;      // end fence addr
-    u32    sbuf_block;	        // Number of 4k block
+    u32    shadow_blocks;	        // Number of 4k block
     u16    is_bounce_buffer;	// Bounce buffer
     u8     padding[2];          // padding
 } __attribute__((packed, aligned(8)));
@@ -288,6 +288,7 @@ void nvfs_io_process_exiting(nvfs_mgroup_ptr_t nvfs_mgroup);
 #define NVFS_IOCTL_VMAPMMAP _IOW(NVFS_MAGIC, 13, int)
 #define PAGE_PER_GPU_PAGE_SHIFT  4
 #define GPU_PAGE_SHIFT   16
+// 64KB
 #define GPU_PAGE_SIZE    ((u64)1 << GPU_PAGE_SHIFT)
 #define GPU_PAGE_OFFSET  (GPU_PAGE_SIZE-1)
 #define GPU_PAGE_MASK    (~GPU_PAGE_OFFSET)

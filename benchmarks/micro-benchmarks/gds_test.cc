@@ -187,7 +187,7 @@ static void *batch_thread(void *arg){
     size_t done_bytes = 0;
     uint64_t io_time;
     ssize_t chunk_done_size = 0;
-    ssize_t chuck_size = data->size / data->depth;
+    ssize_t chunk_size = data->size / data->depth;
 
     CUfileIOEvents_t *events = new CUfileIOEvents_t[data->depth];
     CUfileIOParams_t *params = new CUfileIOParams_t[data->depth];
@@ -210,7 +210,7 @@ static void *batch_thread(void *arg){
      printf("io depth %ld\n", data->depth);
     while (done_bytes < data->size){
         clock_gettime(CLOCK_MONOTONIC, &io_start);
-        if ((ssize_t)(chunk_done_size + data->io_size) < chuck_size){
+        if ((ssize_t)(chunk_done_size + data->io_size) < chunk_size){
             for(i = 0; i < data->depth; i++) {
                 params[i].mode = CUFILE_BATCH;
                 params[i].fh = cf_handle;
@@ -258,10 +258,10 @@ deregister_buffer:
 
 }
 
-int run_gds(GDSOpts opts){
+int run_gds(BenchmarkOpts opts){
     struct timespec prog_start, prog_end;
     CUfileError_t status;
-    GDSThread *threads;
+    BenchmarkThread *threads;
     size_t chunk_size;
     std::vector<uint64_t> latency_vec;
     long long total_io_time = 0, prog_time;
@@ -276,7 +276,7 @@ int run_gds(GDSOpts opts){
         {async_thread, async_thread},
         {batch_thread, batch_thread}};
 
-    threads = new GDSThread[opts.num_threads];
+    threads = new BenchmarkThread[opts.num_threads];
     thread_prep(threads, opts.num_threads);
 
     file_fd = open(opts.file_path,  O_CREAT | O_RDWR | O_DIRECT, 0644);

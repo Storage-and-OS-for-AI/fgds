@@ -54,7 +54,7 @@
 #define PAGE_SIZE 4096
 
 static int device_id = 0;
-static inline uint64_t tenser_to_device_fgds(safetensors::safetensors_t &st, int fd){
+static inline uint64_t tensor_to_device_fgds(safetensors::safetensors_t &st, int fd){
   std::string key;
   safetensors::tensor_t tensor;
   uint64_t total_file_size = 0;
@@ -133,7 +133,7 @@ static inline int read_tensor_fgds(std::string &filename, uint64_t *done_size) {
     return EXIT_FAILURE;
   }
 
-  auto size = tenser_to_device_fgds(st, fd);
+  auto size = tensor_to_device_fgds(st, fd);
 
   *done_size += size;
   return EXIT_SUCCESS;
@@ -190,7 +190,7 @@ int load_safetensors_fgds(std::string &dir) {
   
 
 
-static inline uint64_t tenser_to_device_gds(safetensors::safetensors_t &st, CUfileHandle_t &cf_handle){
+static inline uint64_t tensor_to_device_gds(safetensors::safetensors_t &st, CUfileHandle_t &cf_handle){
     std::string key;
     safetensors::tensor_t tensor;
     uint64_t total_file_size = 0;
@@ -252,7 +252,7 @@ static inline int read_tensor_gds(std::string &filename, uint64_t *done_size) {
       return EXIT_FAILURE;
     }
   
-    auto size = tenser_to_device_gds(st, cf_handle);
+    auto size = tensor_to_device_gds(st, cf_handle);
   
     *done_size += size;
     return EXIT_SUCCESS;
@@ -308,7 +308,7 @@ int load_safetensors_gds(std::string &dir) {
     return EXIT_SUCCESS;
 }
 
-static inline uint64_t tenser_to_device_native(safetensors::safetensors_t &st){
+static inline uint64_t tensor_to_device_native(safetensors::safetensors_t &st){
   std::string key;
   safetensors::tensor_t tensor;
   uint64_t total_file_size = 0;
@@ -350,7 +350,7 @@ static inline int read_tensor_native(std::string &filename, uint64_t *done_size)
       return EXIT_FAILURE;
     }
   
-    auto size = tenser_to_device_native(st);
+    auto size = tensor_to_device_native(st);
   
     *done_size += size;
     return EXIT_SUCCESS;

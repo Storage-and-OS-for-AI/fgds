@@ -1,5 +1,5 @@
-#ifndef __FGDS_COMMOM_H__
-#define __FGDS_COMMOM_H__
+#ifndef __FGDS_COMMON_H__
+#define __FGDS_COMMON_H__
 #include <linux/types.h>
 #include <asm/ioctl.h>
 
@@ -12,13 +12,6 @@
 
 #define DEV_MEM_SIZE 1024 * 1024 * 1024 * 2
 
-struct fgds_mem_find_info{
-    u64 devaddr;
-    u64 cpuvaddr;
-    u64 len;
-    bool found;
-};
-
 struct fgds_dev_info_s {
     u64 dev_id;
 } __attribute__((packed, aligned(8)));
@@ -26,12 +19,12 @@ typedef struct fgds_dev_info_s fgds_dev_info_t;
 
 struct fgds_ioctl_map_s {
     struct fgds_dev_info_s dev;
-    u64 c_vaddr;
-    u64 c_size;
-    u64 n_vaddr;
-    u64 n_size;
+    u64 host_vaddr;
+    u64 host_vaddr_size;
+    u64 gpu_addr;
+    u64 gpu_addr_size;
     u64 end_addr;
-    u32 sbuf_block;
+    u32 shadow_blocks;
 } __attribute__((packed, aligned(8)));
 typedef struct fgds_ioctl_map_s fgds_ioctl_map_t;
 

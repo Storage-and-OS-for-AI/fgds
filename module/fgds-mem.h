@@ -11,30 +11,23 @@
 #define FGDS_MAX_SHADOW_PAGES 4096
 #define FGDS_MAX_SHADOW_ALLOCS_ORDER 12
 
-struct fgds_mem_find_info {
-    u64 devaddr;
-    u64 cpuvaddr;
-    u64 len;
-    bool found;
-};
-
-struct fgds_mmap_buffer {
-    atomic_t ref;
-    struct hlist_node hash_link;
-    u64 c_vaddr; // mmap cpu vaddr
-    u64 map_len; // mmap len
-    u64 n_vaddr; // allocated by cann api
-    u64 dev_len; // reg dev len
-    unsigned long base_index;
-    unsigned long dev_id; // npu id
-    u64 *dev_page_addrs; // dev page io addr list
-    unsigned long dev_page_num; // indicate num of dev_page_addrs
-    unsigned long subpage_num; // (dev_page_size / PAGE_SIZE)
-    struct page **ppages; // host page which are mapped to dev page
-    unsigned long host_page_num; // the corresponding host page num to dev page num, equal to dev_page_num
-    struct vm_area_struct *vma;
+struct fgds_mmap_buffer { // 一次 mmap 映射区的内核侧「账本」，由 fgds_mmap 创建，由 ioctl MAP 时填充
+    atomic_t ref; // 引用计数，为 0 时释放
+    struct hlist_node hash_link; // 挂入全局哈希表 fgds_io_mbuffer_hash
+    u64 c_vaddr; // 用户态 mmap 得到的 CPU 虚拟地址
+    u64 map_len; // 用户态 mmap 得到的映射长度
+    u64 dev_addr; // ioctl MAP 时绑定的 GPU 显存地址
+    u64 dev_len; // ioctl MAP 时绑定的 GPU 显存长度
+    unsigned long base_index; // 在 hash table 中的索引
+    unsigned long dev_id; // gpu id
+    u64 *dev_page_addrs; // GPU 显存页的物理地址，调 nvidia 内核模块接口获取
+    unsigned long dev_page_num; // GPU 显存页数
+    unsigned long cpu_pages_per_gpu_page; // (dev_page_size / PAGE_SIZE) 一个 GPU 显存页对应多少个 CPU 页。目前是 64KB GPU 页 = 16 个 4KB CPU 页
+    struct page **ppages; // 要插入进用户 VMA 的 CPU 内存页数组（映射到 GPU 显存页）
+    unsigned long host_page_num; // 对应的主机页数，等于 dev_page_num
+    struct vm_area_struct *vma; // 反向指向这块 mmap 的 VMA
     struct fgds_dev *dev;
-    bool remap; // if vma remap_pfn_range set true, otherwise false
+    bool remap; // 是否已完成页插入映射（成功 MAP 后置 true；由 remap_pfn_range 设置）
     struct p2p_vmap* map;
 };
 typedef struct fgds_mmap_buffer* fgds_mmap_buffer_t;
@@ -49,29 +42,5 @@ int fgds_mmap(struct file *filp, struct vm_area_struct *vma);
 void fgds_mbuffer_init(void);
 void fgds_mbuffer_put(fgds_mmap_buffer_t pbuffer);
 fgds_mmap_buffer_t fgds_mbuffer_get(unsigned long base_index);
-
-struct vmnga_pci_dev_info {
-    u8 bus_no;
-    u8 device_no;
-    u8 function_no;
-};
-
-struct vmnga_pcie_id_info {
-    unsigned int venderid;
-    unsigned int subvenderid;
-    unsigned int deviceid;
-    unsigned int subdeviceid;
-    unsigned int bus;
-    unsigned int device;
-    unsigned int fn;
-};
-
-// addr info: alloc bar4 to external modules.
-
-enum vmng_get_addr_type {
-    VMNG_GET_ADDR_TYPE_TSDRV = 0,
-    VMNG_GET_ADDR_TYPE_MAX
-    // ... other types can be defined here
-};
 
 #endif

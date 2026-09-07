@@ -132,7 +132,7 @@ static inline void loop_fgds_large(struct IOParams *params){
 
     ret = fgds_deregmem(device_id, gpu_buffer, params->io_size);
     if (ret){
-        printf("fgds unregmem failed\n");
+        printf("fgds deregmem failed\n");
         exit(1);
     }
 

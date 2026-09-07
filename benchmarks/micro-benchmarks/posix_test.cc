@@ -84,8 +84,8 @@ static void *read_thread(void *arg) {
     return NULL;
 }
 
-int run_posix(GDSOpts opts){
-    GDSThread *threads;
+int run_posix(BenchmarkOpts opts){
+    BenchmarkThread *threads;
     size_t chunk_size;
     unsigned long long total_io_operations = 0, total_io_time = 0;
     double average_io_latency, average_io_bandwidth;
@@ -98,7 +98,7 @@ int run_posix(GDSOpts opts){
     static void *(*rw_funcs[2][2])(void *arg) = {{read_thread, write_thread}, {NULL, NULL}};
 
 
-    threads = new GDSThread[opts.num_threads];
+    threads = new BenchmarkThread[opts.num_threads];
     thread_prep(threads, opts.num_threads);
 
     file_fd = open(opts.file_path,  O_CREAT | O_RDWR | O_DIRECT, 0644);

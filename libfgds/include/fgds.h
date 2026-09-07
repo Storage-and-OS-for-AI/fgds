@@ -22,7 +22,7 @@ extern "C" {
 #endif
 
 typedef struct fgds_fileid {
-    int fd;
+    int fd; // 磁盘文件的fd
     int deviceID;
 } fgds_fileid_t;
 

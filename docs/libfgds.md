@@ -62,12 +62,12 @@ int fgds_regmem(int device_id, const void *addr, size_t len, void **target_addr)
     p2p_map->n_addr = addr;
     p2p_map->length = len;
     // allocate virtual address space for the P2P map
-    // the bdev_fd is the file descriptor of the character device
+    // the dev_fd is the file descriptor of the character device
     p2p_map->vaddrs = mmap(p2p_map->vaddrs,
                             p2p_map->length,
                             PROT_READ|PROT_WRITE,
                             MAP_SHARED,
-                            pb->bdev_fd,
+                            pb->dev_fd,
                             0);
     // Check if the mmap operation was successful
     if ((u64)p2p_map->vaddrs == 0xffffffffffffffff) {
@@ -103,3 +103,7 @@ int fgds_regmem(int device_id, const void *addr, size_t len, void **target_addr)
 int fgds_deregmem(int device_id, const void *addr, size_t len);
 ```
 This function is used to unregister a previously registered memory region from a specified device. It removes the mapping of the memory region from the device's address space. It performs the reverse operation of `fgds_regmem`, first removing the registration information from the kernel module using IOCTL, and then unmapping the user space mapping relationship using `munmap`.
+
+## 3. Example
+
+A complete usage example is provided in [example/example.cc](../example/example.cc), demonstrating the full lifecycle: `fgds_open` → `cudaMalloc` → `fgds_regmem` → `pread`/`pwrite` → `fgds_deregmem` → `fgds_close`.
