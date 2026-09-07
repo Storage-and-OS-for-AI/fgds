@@ -101,7 +101,6 @@ int extract_trailing_number(const char str[]) {
 }
 
 static int fgds_devm_memremap(struct fgds_dev *gpu_dev) {
-	int ret = 1;
 	struct dev_pagemap *pgmap;
 
 	gpu_dev->p2p_pgmap = devm_kzalloc(&gpu_dev->dev->dev,  //分配的是内核内存，这里指针的意思是关联了这个gpu，设备驱动卸载时内存会自动释放
@@ -196,8 +195,7 @@ static int fgds_devm_memremap(struct fgds_dev *gpu_dev) {
 	printk("gpu devm_memremap_pages success, addr is %#lx\n",
 			(uintptr_t)gpu_dev->pci_mem_va);
 	gpu_dev->remap = 1;
-	ret = 0;
-	return ret;
+	return 0;
 }
 
 /**
