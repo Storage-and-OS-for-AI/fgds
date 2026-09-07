@@ -229,15 +229,12 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 		bus = (gpu_info_table[i] >> 8) & 0xFF;
 		fn = gpu_info_table[i] & 0xFF;
 		dev_ctrl->gpu_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
-		// printk("gpu%u: pci_get_domain_bus_and_slot success, bus is %x, fn is %x\n", i, bus, fn);
 		if (dev_ctrl->gpu_dev[i].dev == NULL) {
 			printk("gpu%u: pci_get_domain_bus_and_slot failed\n", i);
 			return -1;
 		}
 		for (j = 0; j < PCI_STD_NUM_BARS; j++) {
 			size = pci_resource_len(dev_ctrl->gpu_dev[i].dev, j);
-			// 考虑打日志，输出每个bar区域的size和paddr
-			// printk("gpu%u: bar%d size is 0x%llx, paddr is 0x%llx\n", i, j, size, pci_resource_start(dev_ctrl->gpu_dev[i].dev, j));
 			if (size > dev_ctrl->gpu_dev[i].size){
 				// get the maximum BAR size for each GPU device, which is the size of the GPU memory
 				dev_ctrl->gpu_dev[i].paddr = pci_resource_start(dev_ctrl->gpu_dev[i].dev, j);
@@ -277,7 +274,7 @@ static int fgds_open(struct inode *inode, struct file *filp) {
 
 	if (file_name != NULL) {
 		dev_idx = extract_trailing_number(file_name);
-		printk("fgds_open %s, gpu_idx is %d\n", file_name, dev_idx);
+		pr_debug("fgds_open %s, gpu_idx is %d\n", file_name, dev_idx);
 		if (dev_idx < 0 || dev_idx >= ctrl.dev_num) {
 			ret = -1;
 			goto out;
@@ -291,7 +288,7 @@ static int fgds_open(struct inode *inode, struct file *filp) {
 		filp->private_data = &ctrl.gpu_dev[dev_idx];
 	}
 out:
-	printk("fgds_open %d\n", ret);
+	pr_debug("fgds_open %d\n", ret);
 	return ret;
 }
 
@@ -509,7 +506,7 @@ static void __exit fgds_exit(void) {
 	unregister_chrdev_region(fgds_chr_devt, FGDS_MINORS);
 	ida_destroy(&fgds_chr_minor_ida);
 
-	printk("fgds_exit, Good bye!");
+	printk("fgds_exit, Good bye!\n");
 }
 
 module_init(fgds_init);
