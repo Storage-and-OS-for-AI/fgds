@@ -400,10 +400,6 @@ int fgds_deregmem(int device_id, const void *gpu_addr, size_t len) {
     return ret;
 }
 
-int fgds_close(fgds_fileid_t fid) {
-    return close(fid.fd);
-}
-
 // 原始单次 pread 路径：用于小 IO（nbyte < FGDS_URING_READ_THRESH），
 // 同时也是 io_uring 流水线的基础构建块。
 static ssize_t fgds_read_direct(fgds_fileid_t fid, void *gpu_buf,
