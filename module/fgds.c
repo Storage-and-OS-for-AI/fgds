@@ -42,12 +42,12 @@ struct cdev fgds_chr_dev;
 
 #define FGDS_MINORS 1
 
-struct fgds_ctrl ctrl;
+static struct fgds_ctrl ctrl;
 
 #define NUM_THREADS 128
 #define MAX_GPUIDS 16
 
-u32 gpu_count;
+static u32 gpu_count;
 extern uint64_t gpu_info_table[MAX_GPU_DEVS];
 
 /* use_all_gpus=1: 使用所有 GPU; =0: 仅使用 gpuids 中指定索引的 GPU，如 gpuids=0,2 */
@@ -219,8 +219,8 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
 	}
 
 	// get the PCIe BAR information of each GPU device
-	dev_ctrl->dev_num = dev_num;
-	for (i = 0; i < dev_ctrl->dev_num; i++) {
+	dev_dev_ctrl->dev_num = dev_num;
+	for (i = 0; i < dev_dev_ctrl->dev_num; i++) {
 		if (!fgds_use_device(i)) {
 			continue;
 		}
@@ -228,35 +228,35 @@ static int fgds_ctrl_init(struct fgds_ctrl *dev_ctrl, u32 dev_num) {
         // get the PCIe BAR information of each GPU device
 		bus = (gpu_info_table[i] >> 8) & 0xFF;
 		fn = gpu_info_table[i] & 0xFF;
-		dev_ctrl->gpu_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
+		dev_dev_ctrl->gpu_dev[i].dev = pci_get_domain_bus_and_slot(0, bus, fn);
 		// printk("gpu%u: pci_get_domain_bus_and_slot success, bus is %x, fn is %x\n", i, bus, fn);
-		if (dev_ctrl->gpu_dev[i].dev == NULL) {
+		if (dev_dev_ctrl->gpu_dev[i].dev == NULL) {
 			printk("gpu%u: pci_get_domain_bus_and_slot failed\n", i);
 			return -1;
 		}
 		for (j = 0; j < PCI_STD_NUM_BARS; j++) {
-			size = pci_resource_len(dev_ctrl->gpu_dev[i].dev, j);
+			size = pci_resource_len(dev_dev_ctrl->gpu_dev[i].dev, j);
 			// 考虑打日志，输出每个bar区域的size和paddr
-			// printk("gpu%u: bar%d size is 0x%llx, paddr is 0x%llx\n", i, j, size, pci_resource_start(dev_ctrl->gpu_dev[i].dev, j));
-			if (size > dev_ctrl->gpu_dev[i].size){
+			// printk("gpu%u: bar%d size is 0x%llx, paddr is 0x%llx\n", i, j, size, pci_resource_start(dev_dev_ctrl->gpu_dev[i].dev, j));
+			if (size > dev_dev_ctrl->gpu_dev[i].size){
 				// get the maximum BAR size for each GPU device, which is the size of the GPU memory
-				dev_ctrl->gpu_dev[i].paddr = pci_resource_start(dev_ctrl->gpu_dev[i].dev, j);
-				dev_ctrl->gpu_dev[i].size = size;
+				dev_dev_ctrl->gpu_dev[i].paddr = pci_resource_start(dev_dev_ctrl->gpu_dev[i].dev, j);
+				dev_dev_ctrl->gpu_dev[i].size = size;
 			}
 		}
-		dev_ctrl->gpu_dev[i].idx = i;
-		dev_ctrl->gpu_dev[i].remap = 0;
+		dev_dev_ctrl->gpu_dev[i].idx = i;
+		dev_dev_ctrl->gpu_dev[i].remap = 0;
 		printk("gpu%u: bus is %x, size is %llu, paddr is %#llx, try to remap bar memory to kernel space\n", i,
-			dev_ctrl->gpu_dev[i].dev->bus->number, dev_ctrl->gpu_dev[i].size,
-			dev_ctrl->gpu_dev[i].paddr);
+			dev_dev_ctrl->gpu_dev[i].dev->bus->number, dev_dev_ctrl->gpu_dev[i].size,
+			dev_dev_ctrl->gpu_dev[i].paddr);
 		
 		// remap the GPU device's BAR memory to the kernel space
-		ret = fgds_devm_memremap(&dev_ctrl->gpu_dev[i]);
+		ret = fgds_devm_memremap(&dev_dev_ctrl->gpu_dev[i]);
 		if (ret) {
 			/* remap 失败：fgds_devm_memremap 内部已 devm_kfree(p2p_pgmap)；此处仅释放 PCI 引用 */
 			printk("gpu%u: fgds_devm_memremap failed, release PCI reference\n", i);
-			pci_dev_put(dev_ctrl->gpu_dev[i].dev);
-			dev_ctrl->gpu_dev[i].dev = NULL;
+			pci_dev_put(dev_dev_ctrl->gpu_dev[i].dev);
+			dev_dev_ctrl->gpu_dev[i].dev = NULL;
 		} else {
 			// 只要有至少一块GPU remap成功，就返回0，就加载内核模块成功
 			flag = 0;
@@ -389,10 +389,10 @@ int fgds_cdev_add(struct cdev *cdev, struct device *cdev_device,
 	return ret;
 }
 
-int fgds_cdev_init(struct fgds_ctrl *ctrl) {
+int fgds_cdev_init(struct fgds_ctrl *dev_ctrl) {
 	int ret = -ENOMEM;
 	int i;
-	ret = alloc_chrdev_region(&fgds_chr_devt, 0, ctrl->dev_num,
+	ret = alloc_chrdev_region(&fgds_chr_devt, 0, dev_ctrl->dev_num,
 								"fgds-generic");
 	if (ret < 0)
 		goto destroy_subsys_class;
@@ -405,18 +405,18 @@ int fgds_cdev_init(struct fgds_ctrl *ctrl) {
 		ret = PTR_ERR(fgds_chr_class);
 		goto unregister_generic_fgds;
 	}
-	for (i = 0; i < ctrl->dev_num; i++) {
+	for (i = 0; i < dev_ctrl->dev_num; i++) {
 		if (!fgds_use_device(i)) {
 			continue;
 		}
 		/* 仅对 remap 成功的 GPU 创建字符设备 */
-		if (!ctrl->gpu_dev[i].remap) {
+		if (!dev_ctrl->gpu_dev[i].remap) {
 			continue;
 		}
-		ret = fgds_cdev_add(&ctrl->gpu_dev[i].cdev, &ctrl->gpu_dev[i].device,
-							&fgds_chr_fops, THIS_MODULE, &ctrl->gpu_dev[i]);
+		ret = fgds_cdev_add(&dev_ctrl->gpu_dev[i].cdev, &dev_ctrl->gpu_dev[i].device,
+							&fgds_chr_fops, THIS_MODULE, &dev_ctrl->gpu_dev[i]);
 		if (ret) {
-		kfree_const(ctrl->gpu_dev[i].device.kobj.name);
+		kfree_const(dev_ctrl->gpu_dev[i].device.kobj.name);
 		goto unregister_generic_fgds;
 		}
 		printk("fgds_cdev_init device:%d success!\n", i);
@@ -424,7 +424,7 @@ int fgds_cdev_init(struct fgds_ctrl *ctrl) {
 	return 0;
 
 unregister_generic_fgds:
-  	unregister_chrdev_region(fgds_chr_devt, ctrl->dev_num);
+  	unregister_chrdev_region(fgds_chr_devt, dev_ctrl->dev_num);
 
 destroy_subsys_class:
 	class_destroy(fgds_chr_class);
