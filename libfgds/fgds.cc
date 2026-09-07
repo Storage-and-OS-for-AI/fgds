@@ -67,7 +67,7 @@ static std::vector<std::string> fgds_dev_path = {
 
 static std::vector<bool> fgds_initialized(FGDS_MAX_DEVICES, false);
 
-void fgds_free_mmap_nodes(fgds_mmap_buffer_t *buffer) {
+static void fgds_free_mmap_nodes(fgds_mmap_buffer_t *buffer) {
     struct fgds_mmap_node_s *current = buffer->head;
     struct fgds_mmap_node_s *next;
     int count = 0;
@@ -142,7 +142,7 @@ static int __fgds_open(const char *dev_path, fgds_mmap_buffer_t *mbuffer) {
 
 
 
-bool is_fgds_initialized() {
+static bool is_fgds_initialized() {
     bool initialized = false;
     for (int i = 0; i < g_device_count; i++) {
         initialized = initialized | fgds_initialized[i];
@@ -182,7 +182,7 @@ int fgds_open(int deviceID) {
 }
 
 
-int insert_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, fgds_mmap_node_t *new_node) {
+static int insert_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, fgds_mmap_node_t *new_node) {
     if (!new_node) {
         fprintf(stderr, "%s: new_node is NULL\n", __func__);
         return -1;
@@ -195,7 +195,7 @@ int insert_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, fgds_mmap_node_t *new_nod
     return 0;
 }
 
-fgds_mmap_node_t *find_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, u64 gpu_addr, u64 len) {
+static fgds_mmap_node_t *find_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, u64 gpu_addr, u64 len) {
     fgds_mmap_node_t *current = mbuffer->head;
     while (current) {
         if (current->gpu_addr <= gpu_addr && ((current->gpu_addr + current->length) >= (gpu_addr + len))) {
@@ -206,7 +206,7 @@ fgds_mmap_node_t *find_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, u64 gpu_addr,
     return NULL; // 未找到节点
 }
 
-int delete_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, fgds_mmap_node_t *node) {
+static int delete_fgds_mmap_node(fgds_mmap_buffer_t *mbuffer, fgds_mmap_node_t *node) {
     fgds_mmap_node_t *current = mbuffer->head;
     fgds_mmap_node_t *previous = NULL;
     pthread_mutex_lock(&mbuffer->lock);
@@ -328,7 +328,7 @@ int fgds_regmem(int device_id, const void *gpu_addr, size_t len, void **target_a
 }
 
 
-int __fgds_deregmem(fgds_mmap_buffer_t *pb, u64 n_addr, u64 c_addr, size_t len) {
+static int __fgds_deregmem(fgds_mmap_buffer_t *pb, u64 n_addr, u64 c_addr, size_t len) {
     fgds_ioctl_para_t para;
     int ret;
 
