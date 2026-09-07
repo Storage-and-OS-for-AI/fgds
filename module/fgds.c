@@ -111,9 +111,11 @@ static int fgds_devm_memremap(struct fgds_dev *gpu_dev) {
 	printk("gpu->pgmap->res.start is %#llx, end is %#llx\n", pgmap->range.start,
 			pgmap->range.end);
 	pgmap->nr_range = 1;
-	// pgmap->type = MEMORY_DEVICE_PCI_P2PDMA;
-	// 用MEMORY_DEVICE_PCI_P2PDMA时，跑example和micro.py会异常重启。改成MEMORY_DEVICE_GENERIC能正常跑，经测试验证，对性能的影响理论上不大。
-	// todo:理论上应用MEMORY_DEVICE_PCI_P2PDMA,待排查处理。
+	/*
+	 * 使用 MEMORY_DEVICE_PCI_P2PDMA 时,example/micro.py 会异常重启;
+	 * 改用 MEMORY_DEVICE_GENERIC 后验证可正常运行(对性能的理论影响不大)。
+	 * 理论上仍应使用 MEMORY_DEVICE_PCI_P2PDMA,待后续排查处理。
+	 */
 	pgmap->type = MEMORY_DEVICE_GENERIC;
 
 	// 把GPU的PCIE Bar地址映射到内核的ZONE_DEVICE类型的虚拟内存，让内核可以访问gpu bar地址，并分配page来管理bar地址,达到统一地址管理的效果，例如支持dma和用户空间mmap这块内核虚拟内存。
@@ -175,18 +177,16 @@ static int fgds_devm_memremap(struct fgds_dev *gpu_dev) {
 				return 0;
 			}
 		}
-		// 所有探测均失败，清理并返回错误
+		// 所有探测均失败
 		printk("fgds: devm_memremap_pages failed after all ioremap probes.\n");
-		devm_kfree(&gpu_dev->dev->dev, gpu_dev->p2p_pgmap);
-		gpu_dev->p2p_pgmap = NULL;
-		return -ENOMEM;
 #else
-		// 非x86架构，不进行探测，直接返回错误
+		// 非 x86 架构,不进行探测
 		printk("fgds: devm_memremap_pages failed and not x86 architecture, skipping probe. Not supported.\n");
+#endif
+		/* 探测失败后的公共清理 */
 		devm_kfree(&gpu_dev->dev->dev, gpu_dev->p2p_pgmap);
 		gpu_dev->p2p_pgmap = NULL;
 		return -ENOMEM;
-#endif
 	}
 
 	printk("gpu devm_memremap_pages success, addr is %#lx\n",
