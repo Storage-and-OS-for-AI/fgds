@@ -25,6 +25,6 @@ python -c "import fgds; print(fgds.__file__)"
 ```bash
 python test/test.py -f /data/a.safetensors
 ```
-- **Test the lmcache with FGDS backend**：See [fgds-lmcache.md](./docs/fgds-lmcache.md) for more details.
+- **Test the lmcache with FGDS backend**：See [lmcache.md](./lmcache.md) for more details.
 
-- **Test the fastsafetensors with FGDS copier**：See [fgds-fastsafetensor.md](./docs/fgds-fastsafetensor.md) for more details.
+- **Test the fastsafetensors with FGDS copier**：See [fgds-fastsafetensor.md](../docs/fgds-fastsafetensor.md) for more details.
