@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0 
 /*
- * dmabuf_example - end-to-end example of the fgds kernel module
+ * minimal_example - end-to-end example of the fgds kernel module
  * (module/) UAPI, emphasizing the user-kernel API flow:
  *
  *   user space                              kernel module
@@ -17,8 +17,8 @@
  *
  * No kernels: one pattern, one round trip checking both directions.
  *
- * Build: nvcc -O2 -Wno-deprecated-gpu-targets -x cu -Imodule -o dmabuf_example example/dmabuf_example.cc -lcuda
- * Run:   ./dmabuf_example <gpu_id> <file_path>
+ * Build: nvcc -O2 -Wno-deprecated-gpu-targets -x cu -Imodule -lcuda -o minimal_example example/minimal_example.cc 
+ * Run:   ./minimal_example <gpu_id> <file_path>
  * Note:  file_path needs an O_DIRECT-capable filesystem (local NVMe/SSD);
  *        the fgds node is derived from the GPU PCI BDF
  *        (cudaDeviceGetPCIBusId), not from <gpu_id>.
