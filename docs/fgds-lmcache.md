@@ -93,7 +93,7 @@ print("FGDS backend imported successfully")
 
 ### LMCache Configuration File
 
-Create a YAML configuration file (e.g., `fgds.yaml`) with the following settings:
+Create a YAML configuration file (e.g., `fgds_lmcache_backend.yaml`) with the following settings:
 
 ```yaml
 local_cpu: false
@@ -152,7 +152,7 @@ pip install lmcache
 ```bash
 cd /path/to/fgds/python/test
 
-LMCACHE_CONFIG_FILE="./fgds.yaml" \
+LMCACHE_CONFIG_FILE="./fgds_lmcache_backend.yaml" \
 LMCACHE_USE_EXPERIMENTAL=True \
 CUDA_VISIBLE_DEVICES=0 \
 vllm serve /path/to/your/model/ \
