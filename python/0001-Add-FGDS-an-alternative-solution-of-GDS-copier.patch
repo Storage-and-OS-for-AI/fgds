@@ -1,4 +1,4 @@
-From 0eccb2bdefebf90f4385f53454a0a99b5d43340c Mon Sep 17 00:00:00 2001
+From a8f1de2f9242625cd8efb8f67cfc5a772f78d422 Mon Sep 17 00:00:00 2001
 From: Keven Kuang <kuangkai@kylinos.cn>
 Date: Wed, 8 Apr 2026 18:04:23 +0800
 Subject: [PATCH] Add FGDS (an alternative solution of GDS) copier
@@ -35,17 +35,17 @@ Usage:
 Signed-off-by: Kai Kuang <kuangkai@kylinos.cn>
 ---
  .github/workflows/test-torch.yaml  |   2 +-
- docs/configuration.md              |  44 +++-
+ docs/configuration.md              |  30 ++-
  fastsafetensors/copier/__init__.py |   1 +
  fastsafetensors/copier/fgds.py     | 206 +++++++++++++++++
  fastsafetensors/cpp/fgds_ext.cpp   | 358 +++++++++++++++++++++++++++++
  fastsafetensors/fgds_ext.pyi       |  38 +++
- fastsafetensors/loader.py          |  62 ++---
+ fastsafetensors/loader.py          |  57 ++---
  fastsafetensors/parallel_loader.py |   5 +
  setup.py                           |  21 +-
  tests/unit/test_auto_loader.py     |  81 +++++++
  tests/unit/test_fastsafetensors.py | 165 +++++++++++--
- 11 files changed, 924 insertions(+), 59 deletions(-)
+ 11 files changed, 915 insertions(+), 49 deletions(-)
  create mode 100644 fastsafetensors/copier/fgds.py
  create mode 100644 fastsafetensors/cpp/fgds_ext.cpp
  create mode 100644 fastsafetensors/fgds_ext.pyi
@@ -64,40 +64,25 @@ index e074229..c1b0495 100644
            coverage combine .coverage_*
            coverage html -d "${LOGDIR}/htmlcov"
 diff --git a/docs/configuration.md b/docs/configuration.md
-index 62ba3f9..6b63872 100644
+index 2e5e64a..a889327 100644
 --- a/docs/configuration.md
 +++ b/docs/configuration.md
-@@ -31,13 +31,23 @@ When no config file is found, `AutoLoader` uses these defaults:
- 
+@@ -35,6 +35,14 @@ When no config file is found, `AutoLoader` uses these defaults:
  The base loader extension defaults to `copier_type: "gds"` (GPU Direct Storage).
  
--## queue_size Semantics
+ ## queue_size Semantics
 +Available `copier_type` values:
- 
--| `queue_size` | Mode | GPU Memory | Behavior |
--|---|---|---|---|
--| `-1` | Fully serial | 1 batch | `copy_files → broadcast → copy_files → ...` |
--| `0` | Unbuffered pipeline | Up to 2 batches | 1 batch copying + 1 batch broadcasting concurrently |
--| `>0` | Buffered pipeline | Up to `queue_size+1` batches | Producer fills queue while consumer broadcasts |
 +| Value        | Description                                                                                                                                         |
 +| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 +| `"gds"`      | NVIDIA GPUDirect Storage via cuFile (default on Linux when available)                                                                               |
-+| `"fgds"`     | Alternative GPU Direct Storage implementation via [FGDS](https://atomgit.com/openeuler/fgds)                                                                                            |
++| `"fgds"`     | Alternative GPU Direct Storage implementation via [FGDS](https://github.com/Storage-and-OS-for-AI/fgds)                                                                                            |
 +| `"nogds"`    | Bounce-buffer pread path (no GPU Direct); fallback when GDS is unavailable                                                                          |
 +| `"unified"`  | Unified-memory copier for shared CPU/GPU memory systems (e.g., DGX Spark); automatically selected on unified-memory hosts when `nogds` is requested |
 +| `"dstorage"` | DirectStorage backend (Windows only)                                                                                                                |
-+
-+## queue\_size Semantics
-+
-+| `queue_size` | Mode                | GPU Memory                   | Behavior                                            |
-+| ------------ | ------------------- | ---------------------------- | --------------------------------------------------- |
-+| `-1`         | Fully serial        | 1 batch                      | `copy_files → broadcast → copy_files → ...`         |
-+| `0`          | Unbuffered pipeline | Up to 2 batches              | 1 batch copying + 1 batch broadcasting concurrently |
-+| `>0`         | Buffered pipeline   | Up to `queue_size+1` batches | Producer fills queue while consumer broadcasts      |
  
- `use_pipeline: false` forces `queue_size=-1` (serial, minimal GPU memory).
- 
-@@ -70,7 +80,23 @@ No config file. Uses `loader="base"`, `gds`, serial mode.
+ | `queue_size` | Mode | Live chunk buffers per rank | Behavior |
+ |---|---|---|---|
+@@ -127,7 +135,23 @@ No config file. Uses `loader="base"`, `gds`, serial mode.
  
  Enables GPU Direct Storage for NVMe-to-GPU transfers, bypassing host CPU/memory.
  
@@ -122,7 +107,7 @@ index 62ba3f9..6b63872 100644
  
  ```json
  {
-@@ -85,7 +111,7 @@ Enables GPU Direct Storage for NVMe-to-GPU transfers, bypassing host CPU/memory.
+@@ -142,7 +166,7 @@ Enables GPU Direct Storage for NVMe-to-GPU transfers, bypassing host CPU/memory.
  
  Overlaps `copy_files` with `broadcast` for higher throughput.
  
@@ -131,7 +116,7 @@ index 62ba3f9..6b63872 100644
  
  ```json
  {
-@@ -101,7 +127,7 @@ Overlaps `copy_files` with `broadcast` for higher throughput.
+@@ -158,7 +182,7 @@ Overlaps `copy_files` with `broadcast` for higher throughput.
  
  Uses ThreeFSLoader with 3FS USRBIO backend.
  
@@ -773,7 +758,7 @@ index 0000000..238e2b4
 +def fgds_close_library() -> None: ...
 +def fgds_is_initialized() -> bool: ...
 diff --git a/fastsafetensors/loader.py b/fastsafetensors/loader.py
-index 937c160..4a3235b 100644
+index b5d4f2b..0d4b2e7 100644
 --- a/fastsafetensors/loader.py
 +++ b/fastsafetensors/loader.py
 @@ -17,12 +17,7 @@ from typing import (
@@ -790,19 +775,7 @@ index 937c160..4a3235b 100644
  from .copier import (
      CopierConstructFunc,
      CopierInterface,
-@@ -89,10 +84,7 @@ class BaseSafeTensorsFileLoader:
-         self._chunk_plan: Dict[str, Tuple[Set[str], List[Tuple[int, int]]]] = {}
-         self.init_numa(set_numa)
-         self.copier_constructor: CopierConstructFunc = create_copier_constructor(
--            copier_type=copier_type,
--            device=device,
--            framework=self.framework,
--            **kwargs,
-+            copier_type=copier_type, device=device, framework=self.framework, **kwargs
-         )
-         # The class behind copier_constructor, for policy the planner needs
-         # before any copier exists (chunk_transient_multiplier). Read off the
-@@ -240,10 +232,7 @@ class BaseSafeTensorsFileLoader:
+@@ -248,10 +243,7 @@ class BaseSafeTensorsFileLoader:
          else:
              keep_tensor = self._tensor_filter
          return FilesBufferOnDevice(
@@ -814,7 +787,7 @@ index 937c160..4a3235b 100644
          )
  
  
-@@ -272,10 +261,15 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
+@@ -280,10 +272,15 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
      def process_extension_config(
          cls, ext_config: Mapping[str, Any], **kwargs: Any
      ) -> Dict[str, Any]:
@@ -832,7 +805,7 @@ index 937c160..4a3235b 100644
          return out
  
      def __init__(
-@@ -285,6 +279,7 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
+@@ -293,6 +290,7 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
          bbuf_size_kb: int = 16 * 1024,
          max_threads: int = 16,
          nogds: bool = False,
@@ -840,7 +813,7 @@ index 937c160..4a3235b 100644
          set_numa: bool = True,
          disable_cache: bool = True,
          debug_log: bool = False,
-@@ -296,21 +291,22 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
+@@ -304,21 +302,22 @@ class SafeTensorsFileLoader(BaseSafeTensorsFileLoader):
          self.device = self.framework.get_device(device, self.pg)
  
          fstcpp.set_debug_log(debug_log)
@@ -876,7 +849,7 @@ index 937c160..4a3235b 100644
          super().__init__(
              pg,
              self.device,
-@@ -345,11 +341,17 @@ class fastsafe_open:
+@@ -353,11 +352,17 @@ class fastsafe_open:
          pg: Optional[Any] = None,
          device: str = "cpu",
          nogds: bool = False,
@@ -896,10 +869,10 @@ index 937c160..4a3235b 100644
          file_dict: Dict[int, List[str]] = {}
          if isinstance(filenames, str):
 diff --git a/fastsafetensors/parallel_loader.py b/fastsafetensors/parallel_loader.py
-index e6b348d..73bb36c 100644
+index bc13ae8..71d5a8a 100644
 --- a/fastsafetensors/parallel_loader.py
 +++ b/fastsafetensors/parallel_loader.py
-@@ -619,6 +619,8 @@ class ParallelLoader(PipelineParallel):
+@@ -698,6 +698,8 @@ class ParallelLoader(PipelineParallel):
          bbuf_size_kb (int): Bounce buffer size for file copies in KB.
          max_threads (int): Maximum number of threads for memory copies.
          nogds (bool): If True, turn off GDS and fallback to pread with bounce buffer.
@@ -908,7 +881,7 @@ index e6b348d..73bb36c 100644
          use_shm (bool): If True, use shared memory for file loading.
          set_numa (bool): If True, set NUMA node for optimal memory allocation.
          debug_log (bool): Enable debug logs.
-@@ -658,6 +660,7 @@ class ParallelLoader(PipelineParallel):
+@@ -763,6 +765,7 @@ class ParallelLoader(PipelineParallel):
          bbuf_size_kb: int = 16 * 1024,
          max_threads: int = 16,
          nogds: bool = False,
@@ -916,7 +889,7 @@ index e6b348d..73bb36c 100644
          set_numa: bool = True,
          debug_log: bool = False,
          framework="pytorch",
-@@ -680,6 +683,7 @@ class ParallelLoader(PipelineParallel):
+@@ -787,6 +790,7 @@ class ParallelLoader(PipelineParallel):
              bbuf_size_kb (int): Bounce buffer size for file copies in KB.
              max_threads (int): Maximum number of threads for memory copies.
              nogds (bool): If True, turn off GDS and fallback to pread with bounce buffer.
@@ -924,7 +897,7 @@ index e6b348d..73bb36c 100644
              set_numa (bool): If True, set NUMA node for optimal memory allocation.
              debug_log (bool): Enable debug logs.
              framework (str): Framework to use for tensor operations.
-@@ -695,6 +699,7 @@ class ParallelLoader(PipelineParallel):
+@@ -802,6 +806,7 @@ class ParallelLoader(PipelineParallel):
              bbuf_size_kb=bbuf_size_kb,
              max_threads=max_threads,
              nogds=nogds,
@@ -1082,7 +1055,7 @@ index bf48a14..69b86ba 100644
 +        assert result["bbuf_size_kb"] == 8192
 +        assert result["max_threads"] == 8
 diff --git a/tests/unit/test_fastsafetensors.py b/tests/unit/test_fastsafetensors.py
-index 3b0ae03..bea9a10 100644
+index 52d5bdf..5005f7d 100644
 --- a/tests/unit/test_fastsafetensors.py
 +++ b/tests/unit/test_fastsafetensors.py
 @@ -20,6 +20,7 @@ from fastsafetensors import (
@@ -1192,7 +1165,7 @@ index 3b0ae03..bea9a10 100644
      )
      assert captured["copier_type"] == expected_type
  
-@@ -570,6 +622,94 @@ def test_SafeTensorsFileLoaderNoGds(fstcpp_log, input_files, framework) -> None:
+@@ -697,6 +749,94 @@ def test_SafeTensorsFileLoaderNoGds(fstcpp_log, input_files, framework) -> None:
      assert fstcpp.get_cpp_metrics().bounce_buffer_bytes == 0
  
  
@@ -1287,7 +1260,7 @@ index 3b0ae03..bea9a10 100644
  def test_tensor_filter_hides_skipped_tensors(fstcpp_log, input_files, framework):
      device, _ = get_and_check_device(framework)
      meta = SafeTensorsMetadata.from_file(input_files[0], framework)
-@@ -781,10 +921,7 @@ def test_float4_native_shape_and_slices(framework) -> None:
+@@ -908,10 +1048,7 @@ def test_float4_native_shape_and_slices(framework) -> None:
  
      assert framework.get_native_shape(DType.F4, [8, 16]) == [8, 8]
      assert framework.get_native_shape(DType.F4, [16]) == [8]
@@ -1299,7 +1272,7 @@ index 3b0ae03..bea9a10 100644
      assert framework.get_native_slices(
          DType.F4, [8, 16], (slice(None, None, None), slice(4, 12, 1))
      ) == (slice(None, None, None), slice(2, 6, 1))
-@@ -1041,9 +1178,7 @@ def test_no_module_level_torch_import_outside_frameworks() -> None:
+@@ -1168,9 +1305,7 @@ def test_no_module_level_torch_import_outside_frameworks() -> None:
      import fastsafetensors
  
      pkg_dir = os.path.dirname(fastsafetensors.__file__)
