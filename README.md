@@ -91,12 +91,11 @@ Before the disk bandwidth is saturated, the read/write performance comparison is
 
 | Doc | Link |
 | --- | --- |
-| Build / Install | [docs/install.md](./docs/install.md) |
-| Kernel module and Character Device Interface | [docs/fgds-fs.md](./docs/fgds-fs.md) |
+| Getting Started | [docs/getting-started.md](./docs/getting-started.md) |
 | libfgds | [docs/libfgds.md](./docs/libfgds.md) |
 | FGDS Python API | [python/README.md](./python/README.md) |
 | FGDS vLLM LMCache backend | [python/lmcache.md](./python/lmcache.md) |
-| PyTorch FGDS API | [pytorch-fgds/README.md](./pytorch-fgds/README.md) |
+| FGDS PyTorch API | [pytorch-fgds/README.md](./pytorch-fgds/README.md) |
 | FastSafeTensors model loading | [docs/fgds-fastsafetensor.md](./docs/fgds-fastsafetensor.md) |
 | Micro benchmark | [docs/micro-benchmark.md](./docs/micro-benchmark.md) |
 
