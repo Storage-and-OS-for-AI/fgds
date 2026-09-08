@@ -25,30 +25,63 @@ Cloned from [Phoenix](https://github.com/nicexlab/phoenix) at commit [`798208d`]
 
 ## Example
 
-The snippet below shows the main FGDS APIs.
-
-Except for GPU buffer registration (`fgds_regmem` / `fgds_deregmem`), file I/O is done with standard POSIX `pread` / `pwrite` on the registered mapping (`target_addr`).
-
-Error checks and setup details are omitted for brevity; see [example/example.cc](./example/example.cc) for a complete runnable program.
+The snippet below shows the main user-kernel API flow: 
 
 ```cpp
-int device_id = 0;
-size_t io_size = 4 * 1024 * 1024;  // 4MB
-void *gpu_buffer = nullptr, *target_addr = nullptr;
+// user space                                     kernel module
+// cuMemGetHandleForAddressRange(dmabuf_fd)  --->  export dma-buf fd
+// open("/dev/fgds_<bdf>")
+// ioctl(FGDS_IOCTL_REG_BUFFER, &reg)        --->  bind dma-buf, returns reg.idx
+// mmap(dev_fd, size, offset = reg.idx)      --->  map the registered range
+// pwrite / pread on map_addr                --->  DMA file <-> GPU
+// ioctl(FGDS_IOCTL_UNREG_BUFFER, &unreg)    --->  drop the registry entry
+// munmap / close / cudaFree
+```
 
-int fd = open("/data/test.bin", O_CREAT | O_RDWR | O_DIRECT, 0644);
+File I/O is done with standard POSIX `pread` / `pwrite` on the mapping (`map_addr`), and the module turns each call into a DMA transfer between the file and the GPU.
 
-fgds_open(device_id);
+Error checks and setup details are omitted for brevity; see [example/dmabuf_example.cc](./example/dmabuf_example.cc) for a complete runnable program.
+
+```cpp
+size_t io_size = 4 * 1024 * 1024;  // 4MB (multiple of the 64KB GPU page)
+void *gpu_buffer = nullptr, *map_addr = nullptr;
+
+// 1. allocate the GPU buffer and export it as a dma-buf fd
 cudaMalloc(&gpu_buffer, io_size);
-fgds_regmem(device_id, gpu_buffer, io_size, &target_addr);  // extra step vs. POSIX
+int dmabuf_fd = -1;
+cuMemGetHandleForAddressRange(&dmabuf_fd, (CUdeviceptr)gpu_buffer, io_size,
+                              CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 
-pwrite(fd, target_addr, io_size, 0);
-pread(fd, target_addr, io_size, 0);
+// 2. open the module node of the GPU
+int dev_fd = open("/dev/fgds_0000_1e_00_0", O_RDWR);  // module node of GPU 0
 
-fgds_deregmem(device_id, gpu_buffer, io_size);
-cudaFree(gpu_buffer);
-fgds_close(device_id);
+// 3. register the dma-buf with the module
+struct fgds_ioctl_reg_buffer reg = {0};
+reg.dmabuf_fd = dmabuf_fd;
+reg.dmabuf_offset = 0;
+reg.size = io_size;
+ioctl(dev_fd, FGDS_IOCTL_REG_BUFFER, &reg);  // bind dma-buf, returns reg.idx
+
+// 4. mmap the registered range at offset reg.idx
+map_addr = mmap(nullptr, io_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE,
+                dev_fd, reg.idx);
+// map_addr aliases GPU BAR memory: only pass it to pread/pwrite,
+// never dereference it from the CPU.
+
+// 5. file I/O with standard POSIX pread/pwrite
+int fd = open("/data/test.bin", O_CREAT | O_RDWR | O_DIRECT, 0644);
+pwrite(fd, map_addr, io_size, 0);            // DMA GPU -> file
+pread(fd, map_addr, io_size, 0);             // DMA file -> GPU
+
+// 6. teardown in the API-required order: UNREG -> munmap -> close
+struct fgds_ioctl_unreg_buffer unreg = {0};
+unreg.idx = reg.idx;
+ioctl(dev_fd, FGDS_IOCTL_UNREG_BUFFER, &unreg);  // drop the registry entry
+munmap(map_addr, io_size);
+close(dev_fd);
+close(dmabuf_fd);
 close(fd);
+cudaFree(gpu_buffer);
 ```
 
 ## Performance Results
