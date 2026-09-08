@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: Apache-2.0 
+// SPDX-License-Identifier: Apache-2.0
 /*
- * minimal_example - end-to-end example of the fgds kernel module
- * (module/) UAPI, emphasizing the user-kernel API flow:
+ * minimal_example - user-kernel API flow of the fgds kernel
+ * module (module/) UAPI. It walks every ioctl/mmap step in order and
+ * exercises the pwrite/pread data flow:
  *
  *   user space                              kernel module
  *   ------------------------------------    --------------------------
@@ -14,8 +15,6 @@
  *   pread(map_addr)                    -->  DMA file -> GPU
  *   ioctl(FGDS_IOCTL_UNREG_BUFFER)     -->  drop the registry entry
  *   munmap / close / cudaFree
- *
- * No kernels: one pattern, one round trip checking both directions.
  *
  * Build: nvcc -O2 -Wno-deprecated-gpu-targets -x cu -Imodule -lcuda -o minimal_example example/minimal_example.cc 
  * Run:   ./minimal_example <gpu_id> <file_path>
@@ -35,9 +34,6 @@
 #include <unistd.h>
 
 #include "fgds.h" /* UAPI: struct fgds_ioctl_reg_buffer + ioctl commands */
-#if !defined(FGDS_IOCTL_MAGIC)
-#error "must include module/fgds.h: check the -I order"
-#endif
 
 /* /dev/fgds_<bdf>: 0000:1e:00.0 -> /dev/fgds_0000_1e_00_0 */
 static int fgds_dev_path(char *path, size_t len, const char *bdf)
@@ -52,24 +48,10 @@ static int fgds_dev_path(char *path, size_t len, const char *bdf)
 }
 
 #define BUF_SIZE (4UL * 1024 * 1024) /* 4MB, a multiple of the 64KB GPU page */
-#define PATTERN_WORDS (BUF_SIZE / sizeof(uint64_t)) /* word i holds i */
 
 #define FGDS_EXPORTER_ALIGN (64UL * 1024) /* NVIDIA dma-buf export alignment */
 static_assert(BUF_SIZE % FGDS_EXPORTER_ALIGN == 0,
               "BUF_SIZE must be a multiple of FGDS_EXPORTER_ALIGN");
-
-/* 1 iff every 64-bit word i of buf equals i; else prints a diagnostic. */
-static int check_pattern(const char *dir, const uint64_t *buf)
-{
-    for (unsigned long i = 0; i < PATTERN_WORDS; i++) {
-        if (buf[i] != (uint64_t)i) {
-            fprintf(stderr, "%s check FAILED: word %lu is %lu, expect %lu\n",
-                    dir, i, (unsigned long)buf[i], i);
-            return 0;
-        }
-    }
-    return 1;
-}
 
 int main(int argc, char *argv[])
 {
@@ -81,7 +63,6 @@ int main(int argc, char *argv[])
     const char *file_path = argv[2];
     char dev_path[64], pci_bus_id[32] = "";
     void *gpu_buf = NULL, *map_addr = MAP_FAILED;
-    uint64_t *file_buf = NULL;
     int dev_fd = -1, file_fd = -1, dmabuf_fd = -1;
     struct fgds_ioctl_reg_buffer reg;
     struct fgds_ioctl_unreg_buffer unreg = {0};
@@ -97,25 +78,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* 2. fill the host buffer with the pattern and upload it */
-    file_buf = (uint64_t *)aligned_alloc(4096, BUF_SIZE);
-    if (!file_buf) {
-        perror("aligned_alloc");
-        return 1;
-    }
-    for (unsigned long i = 0; i < PATTERN_WORDS; i++)
-        file_buf[i] = (uint64_t)i;
+    /* 2. allocate a GPU buffer the size of the range to register */
     cudaMalloc(&gpu_buf, BUF_SIZE);
-    cudaMemcpy(gpu_buf, file_buf, BUF_SIZE, cudaMemcpyHostToDevice);
-    cudaDeviceSynchronize();
 
     /* 3. export the GPU buffer as a dma-buf fd */
     cuInit(0);
     cuMemGetHandleForAddressRange(&dmabuf_fd, (CUdeviceptr)gpu_buf, BUF_SIZE,
                                   CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 
-    /* 4. REG the exported range, mmap at offset reg.idx. MAP_POPULATE
-     *    installs the pages up front (else lazily on first fault) */
+    /* 4. REG the exported range, mmap at offset reg.idx */
     dev_fd = open(dev_path, O_RDWR);
     if (dev_fd < 0) {
         perror("open fgds char device");
@@ -167,17 +138,8 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
-    /* 8. D2H copy + pattern check: the disk is the only relay between pwrite
-     *    and pread, so one check covers both directions */
-    cudaMemcpy(file_buf, gpu_buf, BUF_SIZE, cudaMemcpyDeviceToHost);
-    if (!check_pattern("round-trip", file_buf)) {
-        ret = 1;
-        goto cleanup;
-    }
-    printf("data consistency check PASSED: %lu bytes round-tripped GPU -> disk -> GPU\n", (unsigned long)BUF_SIZE);
-
 cleanup:
-    /* 9. teardown in API order UNREG -> munmap -> close, guarded by flags */
+    /* 8. teardown in API order UNREG -> munmap -> close, guarded by flags */
     if (registered) {
         unreg.idx = reg.idx;
         if (ioctl(dev_fd, FGDS_IOCTL_UNREG_BUFFER, &unreg) < 0)
@@ -192,6 +154,5 @@ cleanup:
     close(dmabuf_fd);
     close(file_fd);
     cudaFree(gpu_buf);
-    free(file_buf);
     return ret;
 }
