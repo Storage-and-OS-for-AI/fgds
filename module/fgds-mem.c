@@ -52,9 +52,7 @@ static void __fgds_release_gpu_memory_core(struct p2p_vmap *map)
         map->pages = NULL;
     }
 
-    if(map!=NULL) {
-        kfree(map);
-    }
+    kfree(map);
 }
 
 void release_gpu_memory(struct p2p_vmap* map)
@@ -221,18 +219,14 @@ int fgds_map_dev_addr_inner(fgds_mmap_buffer_t mbuffer, u64 devaddr, u64 dev_len
 
     mbuffer->dev_page_addrs = dev_page_addrs;
     host_page_num = mbuffer->host_page_num;
-    if (IS_ERR_OR_NULL(mbuffer->ppages)) {
-        ret = -ENOMEM;
-        goto out;
-    }
-    
+
     // create the mapping between the GPU memory pages and the host memory pages
     for (i = 0; i < nr_dev_pages; i++) {
         pci_bar_off = dev_page_addrs[i] - mbuffer->dev->paddr;
         cpu_vaddr = (uint64_t)(mbuffer->dev->pci_mem_va + pci_bar_off);
 
         // Validate pci_bar_off to prevent out-of-bounds access
-        if (pci_bar_off < 0 || pci_bar_off > (f_dev->size - GPU_PAGE_SIZE)) {
+        if (pci_bar_off > (f_dev->size - GPU_PAGE_SIZE)) {
             printk("Invalid pci_bar_off: 0x%llx, dev_size: 0x%llx\n", pci_bar_off, f_dev->size);
             ret = -EINVAL;
             goto out;
