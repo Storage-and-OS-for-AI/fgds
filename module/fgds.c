@@ -425,7 +425,6 @@ static int __init fgds_init(void) {
 	// get nvidia_p2p symbols
 	if (nvfs_nvidia_p2p_init()) {
 		printk("Could not load nvidia_p2p* symbols\n");
-		ret = -EOPNOTSUPP;
 		return -1;
 	}
 
