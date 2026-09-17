@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
 #include <sys/time.h>
 #include <linux/types.h>
 #include <pthread.h>
@@ -65,7 +66,27 @@ static std::vector<std::string> fgds_dev_path = {
     "/dev/fgds_dev6", "/dev/fgds_dev7"
 };
 
-static std::vector<bool> fgds_initialized(FGDS_MAX_DEVICES, false);
+/* 每设备“是否已成功 fgds_open”。fgds_check_device 在 I/O 热路径上无锁读取，
+ * 因此用原子变量，并以 release(open)/acquire(check) 配对保证：看到 true 的
+ * 读线程一定也能看到 __fgds_open 初始化好的 ctx 字段。 */
+static std::atomic<bool> fgds_initialized[FGDS_MAX_DEVICES] = {};
+
+/* 校验 device_id 合法且该设备已成功 fgds_open。
+ * 所有按 device_id 索引 g_dev_ctx[] 的接口都应先调用本函数，避免越界访问：
+ *   越界/非法 id -> errno = EINVAL, 返回 -1
+ *   合法但未打开 -> errno = ENODEV, 返回 -1
+ */
+static int fgds_check_device(int device_id) {
+    if (device_id < 0 || device_id >= g_device_count) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!fgds_initialized[device_id].load(std::memory_order_acquire)) {
+        errno = ENODEV;
+        return -1;
+    }
+    return 0;
+}
 
 static void fgds_free_mmap_nodes(fgds_mmap_buffer_t *buffer) {
     struct fgds_mmap_node_s *current = buffer->head;
@@ -95,43 +116,38 @@ static int __fgds_close(fgds_mmap_buffer_t *mbuffer) {
         mbuffer->uring_init = false;
     }
 
-    if (mbuffer->dev_fd > 0)
+    if (mbuffer->dev_fd >= 0)
         close(mbuffer->dev_fd);
 
     fgds_free_mmap_nodes(mbuffer);
     pthread_mutex_destroy(&mbuffer->lock);
     pthread_mutex_destroy(&mbuffer->uring_lock);
-    return 0;
-}
-
-static int fgds_close_all() {
-    for (int i = 0; i < g_device_count; i++) {
-        if (fgds_initialized[i]) {
-            __fgds_close(&g_dev_ctx[i]);
-            fgds_initialized[i] = false;
-        }
-    }
+    /* 清空设备状态，避免 ctx 里残留 initialized=true / 已关闭的 fd，
+     * 使 __fgds_close 后的上下文与 fgds_initialized[] 保持一致。 */
+    mbuffer->dev_fd = -1;
+    mbuffer->initialized = false;
     return 0;
 }
 
 int fgds_close(int device_id) {
     if (device_id >= 0 && device_id < g_device_count) {
-        if (fgds_initialized[device_id]) {
+        if (fgds_initialized[device_id].load(std::memory_order_acquire)) {
             __fgds_close(&g_dev_ctx[device_id]);
-            fgds_initialized[device_id] = false;
+            fgds_initialized[device_id].store(false, std::memory_order_release);
         }
         return 0;
     }
+    errno = EINVAL;
     return -1;
 }
 
-static int __fgds_open(const char *dev_path, fgds_mmap_buffer_t *mbuffer) {
-    mbuffer->dev_fd = open(dev_path, O_RDWR);
-    
-    if (mbuffer->dev_fd == -1) {
-        printf("failed to open file %s\n", dev_path);
-        return -1;
-    }
+static int __fgds_open(int device_id, const char *dev_path, fgds_mmap_buffer_t *mbuffer) {
+    mbuffer->dev_fd = open(dev_path, O_RDWR | O_CLOEXEC);
+
+    if (mbuffer->dev_fd == -1)
+        return -1; // 保留 open 设置的 errno，由调用方记录并返回
+
+    mbuffer->device_id = device_id;
     mbuffer->head = NULL;
     pthread_mutex_init(&mbuffer->lock, NULL);
     pthread_mutex_init(&mbuffer->uring_lock, NULL);
@@ -140,43 +156,30 @@ static int __fgds_open(const char *dev_path, fgds_mmap_buffer_t *mbuffer) {
     return 0;
 }
 
-
-
-static bool is_fgds_initialized() {
-    bool initialized = false;
-    for (int i = 0; i < g_device_count; i++) {
-        initialized = initialized | fgds_initialized[i];
-    }
-    return initialized;
-}
-
+/* 打开并初始化设备。
+ *   deviceID 必须是 [0, g_device_count) 内的合法设备号，幂等（已打开则返回 0）。
+ *   -1 及其它越界值一律返回 EINVAL。
+ *
+ * 每个设备相互独立：某个设备打开失败不会影响其它设备，也不会把失败设备标记为
+ * 已初始化，因此失败后可以重试。
+ *
+ * 不提供“打开全部设备”的模式：需要遍历当前实际存在的全部设备的调用方，请自行
+ * 枚举 /dev/fgds_dev*，对存在且可打开的设备号逐个调用本函数。 */
 int fgds_open(int deviceID) {
-    int ret;
-    if (!is_fgds_initialized()) { //只会初始化一个GPU，若已经有GPU被初始化，则不进行其他GPU的初始化
-        if (deviceID == -1) {
-            for (int id = 0; id < g_device_count; ++id) {
-                if (!fgds_initialized[id]) {
-                    ret = __fgds_open(fgds_dev_path[id].c_str(), &g_dev_ctx[id]);
-                    if (ret < 0) {
-                        fgds_close_all();
-                        return ret;
-                    }
-                    fgds_initialized[id] = true;
-                }
-            }
-        } else if (deviceID >= 0 && deviceID < g_device_count) {
-            if (!fgds_initialized[deviceID]) {
-                ret = __fgds_open(fgds_dev_path[deviceID].c_str(), &g_dev_ctx[deviceID]);
-                fgds_initialized[deviceID] = true;
-                return ret;
-            }
-        } else { // only start device id = 0
-            if (!fgds_initialized[0]) {
-                ret = __fgds_open(fgds_dev_path[0].c_str(), &g_dev_ctx[0]);
-                fgds_initialized[0] = true;
-                return ret;
-            }
+    if (deviceID < 0 || deviceID >= g_device_count) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!fgds_initialized[deviceID].load(std::memory_order_acquire)) {
+        if (__fgds_open(deviceID, fgds_dev_path[deviceID].c_str(), &g_dev_ctx[deviceID]) < 0) {
+            int saved = errno;
+            fprintf(stderr, "fgds_open(%d): failed to open %s: %s\n",
+                    deviceID, fgds_dev_path[deviceID].c_str(), strerror(saved));
+            errno = saved;
+            return -1; // 失败不置位，保证可重试
         }
+        fgds_initialized[deviceID].store(true, std::memory_order_release);
     }
     return 0;
 }
@@ -248,6 +251,8 @@ static inline int __fgds_regmem(fgds_mmap_buffer_t *mbuffer, u64 gpu_addr, u64 h
 // 注册到 fgds_regmem 的缓冲长度都必须 64KB 正整数倍
 // 但是文件/传输层没有 FGDS 64KB 下限,只要 O_DIRECT 块对齐(4KB,个别盘 512B).例如注册 64KB buffer 后传输 4KB、用 4KB 文件是可以的
 int fgds_regmem(int device_id, const void *gpu_addr, size_t len, void **target_addr) {
+    if (fgds_check_device(device_id))
+        return -1;
     int i, ret = 0;
     unsigned long mmaped_len;
     size_t mmap_len;
@@ -260,7 +265,6 @@ int fgds_regmem(int device_id, const void *gpu_addr, size_t len, void **target_a
 
     mmap_node->vaddrs = NULL;
     mmap_node->length = len;
-    dev_mbuffer->device_id = device_id;
 
     if (mmap_node->length % FGDS_GPU_PAGE_SIZE != 0) {
         fprintf(stderr, "%s: node->length is not aligned\n", __func__);
@@ -348,7 +352,10 @@ static int __fgds_deregmem(fgds_mmap_buffer_t *pb, u64 n_addr, u64 c_addr, size_
 }
 
 int fgds_deregmem(int device_id, const void *gpu_addr, size_t len) {
-    size_t i, ret = 0;
+    if (fgds_check_device(device_id))
+        return -1;
+    size_t i;
+    int ret = 0;
     unsigned long unmapped_len = 0;
     fgds_mmap_node_t *mmap_node;
     fgds_mmap_buffer_t *mmap_buffer = &g_dev_ctx[device_id];
@@ -438,6 +445,8 @@ static ssize_t fgds_read_direct(fgds_fileid_t fid, void *gpu_buf,
 // 入参语义：从 fid.fd 的 f_offset 读 nbyte 字节，写到 gpu_buf + buf_offset 对应的 GPU 显存。
 ssize_t fgds_read(fgds_fileid_t fid, void *gpu_buf, off_t buf_offset,
                   ssize_t nbyte, off_t f_offset) {
+    if (fgds_check_device(fid.deviceID))
+        return -1;
     // --- 小 IO：直接 pread，避免 io_uring 开销 ---
     if (nbyte < (ssize_t)FGDS_URING_READ_THRESH)
         return fgds_read_direct(fid, gpu_buf, buf_offset, nbyte, f_offset);
@@ -634,6 +643,8 @@ static ssize_t fgds_write_direct(fgds_fileid_t fid, void *gpu_buf,
 // 入参语义：从 gpu_buf + buf_offset 对应的 GPU 显存，写 nbyte 字节到 fid.fd 的 f_offset。
 ssize_t fgds_write(fgds_fileid_t fid, void *gpu_buf, off_t buf_offset,
                    ssize_t nbyte, off_t f_offset) {
+    if (fgds_check_device(fid.deviceID))
+        return -1;
     // --- 小 IO：直接 pwrite，避免 io_uring 开销 ---
     if (nbyte < (ssize_t)FGDS_URING_WRITE_THRESH)
         return fgds_write_direct(fid, gpu_buf, buf_offset, nbyte, f_offset);
@@ -827,6 +838,8 @@ ssize_t fgds_write(fgds_fileid_t fid, void *gpu_buf, off_t buf_offset,
 // 调用方：fgds_read_direct/fgds_write_direct 对每个 x_addrs[] 做一次 pread/pwrite；
 //   io_uring 大 IO 路径按 256KB 子 IO 调本函数，每个子 IO 的 nr_xfer_addrs 至多 2。
 struct fgds_xfer_addr *fgds_do_xfer_addr(int device_id, const void *gpu_buf, off_t buf_offset, size_t nbyte) {
+    if (fgds_check_device(device_id))
+        return NULL;
     struct fgds_xfer_addr *xfer_addr;
     fgds_mmap_buffer_t *_local_mbuffer = &g_dev_ctx[device_id];
     fgds_mmap_node_t *mmap_node;
@@ -849,7 +862,7 @@ struct fgds_xfer_addr *fgds_do_xfer_addr(int device_id, const void *gpu_buf, off
     }
     
     if((nbyte + buf_offset) > mmap_node->length) {
-        fprintf(stderr, "%s: Read/Write out of range 0, nbyte is %lu, buf_offset is %lu, length is %lu\n",
+        fprintf(stderr, "%s: Read/Write out of range 0, nbyte is %lu, buf_offset is %ld, length is %lu\n",
                 __func__, nbyte, buf_offset, mmap_node->length);
         return NULL;
     }

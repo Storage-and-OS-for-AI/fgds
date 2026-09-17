@@ -5,14 +5,26 @@ Libfgds primarily provides interfaces to simplify the interaction between applic
 ### fgds_open
 ```c++
 /**
- * @brief Open and initialize the metadata for a specific device.
- * @param deviceID: The identifier for the target device to be opened and initialized.
+ * @brief Open and initialize the metadata for one device.
+ * @param deviceID: index of the target device; must satisfy 0 <= deviceID < FGDS_MAX_DEVICES.
  * @return On success, 0 is returned.
- *         On failure, -1 is returned, and errno is set appropriately to indicate the error.
+ *         On failure, -1 is returned, and errno is set appropriately to indicate the error
+ *         (EINVAL for an out-of-range deviceID, including -1; otherwise errno from
+ *         open(2), e.g. ENOENT if the device node does not exist, EACCES if it cannot
+ *         be opened).
  */
 int fgds_open(int deviceID);
 ```
 This function opens the character device corresponding to the given deviceID, then initializes and stores the necessary metadata, which is required for subsequent GPU buffer registration and unregistration operations.
+
+Multi-device behavior:
+
+- **Each device is opened independently.** `fgds_open()` is idempotent per device: calling it again for an already-opened device simply returns 0. Opening device *A* never prevents opening device *B*.
+- **There is no "open all" mode.** `-1` is not a sentinel; it is rejected with `errno = EINVAL` like any other out-of-range id. To use every device the kernel exposes, enumerate `/dev/fgds_devN` yourself (e.g. `glob()`/`access()`) and call `fgds_open(n)` for each node that exists. This keeps a single, unambiguous return code: a "open all" call could not report *which* devices were opened, and would return a misleading success on partial failure. The set of device nodes may be sparse (e.g. `gpuids=[0,2]` exposes only `dev0`/`dev2`).
+- **Out-of-range `deviceID`** (negative, including `-1`, or `>=` the library limit) fails with `errno = EINVAL` and is never aliased to device 0.
+- A failed open does **not** mark the device as initialized, so it can be retried later.
+
+> **Thread safety:** `fgds_open` / `fgds_close` are not internally synchronized in this version. Callers that share a process across threads must serialize open/close themselves (the PyTorch binding already does this via its per-file lock). Concurrent I/O on *different* already-opened devices is independent.
 
 ### fgds_close
 ```c++
@@ -20,11 +32,15 @@ This function opens the character device corresponding to the given deviceID, th
  * @brief Close the metadata for a specific device.
  * @param deviceID: The identifier for the target device to be closed.
  * @return On success, 0 is returned.
- *         On failure, -1 is returned, and errno is set appropriately to indicate the error.
+ *         On failure, -1 is returned, and errno is set appropriately to indicate the error
+ *         (EINVAL for an out-of-range deviceID).
  */
 int fgds_close(int deviceID);
 ```
-This operation is the reverse of fgds_open, used to close a previously opened device. It releases all metadata associated with the device and cleans up resources.
+This operation is the reverse of fgds_open, used to close a previously opened device. It releases all metadata associated with the device and cleans up resources (mmap nodes, the per-device io_uring ring and the character-device fd).
+
+- Closing a device that is not open is a no-op and returns 0.
+- `fgds_close` is **not reference counted** in this version: it always tears the device down. The caller must ensure no thread is still issuing `fgds_read` / `fgds_write` / `fgds_regmem` / `fgds_deregmem` on that device when it is closed.
 
 ## 2. Buffer management
 ### fgds_regmem
