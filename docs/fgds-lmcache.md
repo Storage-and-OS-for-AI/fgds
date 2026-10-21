@@ -171,7 +171,7 @@ Use vLLM's benchmark serving script to test performance:
 ```bash
 cd /path/to/vllm
 
-python benchmarks/benchmark_serving.py \
+python3 benchmarks/benchmark_serving.py \
   --model /path/to/your/model/ \
   --backend vllm \
   --dataset-name sonnet \

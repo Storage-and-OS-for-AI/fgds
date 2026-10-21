@@ -167,7 +167,7 @@ export LD_LIBRARY_PATH=/path/to/fgds/build/lib:$LD_LIBRARY_PATH
 # export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
 
 # 编译 C++ 扩展（fgds_ext 会自动检测平台并编译）
-python setup.py build_ext --inplace
+python3 setup.py build_ext --inplace
 
 # 安装 fastsafetensors
 pip install .
@@ -237,20 +237,20 @@ FGDS 提供了测试脚本 `python/test/test_fastsafetensors_copier.py` 用于�
 cd /path/to/fgds/python/test
 
 # 单模式测试 - 使用 FGDS
-python test_fastsafetensors_copier.py \
+python3 test_fastsafetensors_copier.py \
     --model-dir /data/Qwen3-0.6B \
     --device "cuda:0" \
     --use-fgds \
     --drop-cache
 
 # 单模式测试 - 使用 GDS（对比基准）
-python test_fastsafetensors_copier.py \
+python3 test_fastsafetensors_copier.py \
     --model-dir /data/Qwen3-0.6B \
     --device "cuda:0" \
     --drop-cache
 
 # 对比模式 - 同时运行 GDS 和 FGDS 并比较性能
-python test_fastsafetensors_copier.py \
+python3 test_fastsafetensors_copier.py \
     --model-dir /data/Qwen3-0.6B \
     --device "cuda:0" \
     --compare \
@@ -561,10 +561,10 @@ FGDS 微基准测试结果：相比 GDS 性能提升 11%~109%，相比 POSIX 提
 ```shell
 # 验证 ROCm 环境
 rocminfo
-python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+python3 -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 
 # 运行 FGDS 测试
-python test_fastsafetensors_copier.py \
+python3 test_fastsafetensors_copier.py \
     --model-dir /path/to/model \
     --device "cuda:0" \
     --use-fgds \
