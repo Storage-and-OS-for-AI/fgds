@@ -32,6 +32,8 @@ pread/pwrite and ``fgds_regmem`` paths are additionally serialized by this lock.
 narrowing this one to a per-device in-flight count needs an upstream fix first.)
 """
 
+from __future__ import annotations
+
 import atexit
 import ctypes
 import os

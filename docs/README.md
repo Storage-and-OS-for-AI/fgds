@@ -81,6 +81,8 @@ Drop-in PyTorch API compatible with `torch.cuda.gds`, providing GPU↔NVMe check
 pytorch-fgds/
 ├── fgds_torch.py           # fgds_register_buffer, fgds_deregister_buffer, FgdsFile
 ├── benchmark/               # PyTorch I/O benchmarks vs GDS and POSIX
+├── example/
+│   └── checkpoint_demo.py   # FGDS checkpoint read/write example
 └── README.md
 ```
 
