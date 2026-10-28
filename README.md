@@ -15,6 +15,7 @@ Cloned from [Phoenix](https://github.com/xPU-IO/Phoenix) at commit [`798208d`](h
 - **Better Application Compatibility**
     - Introduced Python API
     - Added the LMCache backend, enabling vLLM to offload KV cache via LMCache using FGDS, which accelerates inference performance
+    - Added the fastsafetensors FGDS backend, which has been merged upstream ([PR #111](https://github.com/foundation-model-stack/fastsafetensors/pull/111)), enabling vLLM and SGLang to load model weights directly from NVMe SSDs to GPU memory
     - Added PyTorch APIs, compatible with the PyTorch GDS API, to improve the performance of reading and writing checkpoints during LLM training
     - Featuring (nearly) POSIX-compliant APIs
 - **Fixes**
@@ -226,6 +227,7 @@ Before the disk bandwidth is saturated, the read/write performance comparison is
 
 ## News
 
+- **2026-09-24** — FGDS support for fastsafetensors has been merged upstream ([PR #111](https://github.com/foundation-model-stack/fastsafetensors/pull/111)), enabling zero-copy model loading for vLLM and SGLang
 - **2026-06-03** — Significantly improved read/write performance with io_uring
 - **2026-04-21** — Fixed a resource leak bug and performed some code optimizations
 - **2026-03-11** — Added PyTorch FGDS API as a drop-in replacement for PyTorch GDS API in scenarios such as checkpoint saving
