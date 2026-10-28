@@ -6,6 +6,8 @@
 
 FGDS 为 fastsafetensors 提供了完整支持。通过在 fastsafetensors 中集成 FGDS Copier，模型权重可直接从 SSD 加载到 GPU 显存，无需经过 CPU 内存中转，实现极致的加载性能。FGDS 同时支持 **NVIDIA CUDA** 和 **AMD ROCm/HIP** 两大GPU平台。
 
+该支持已通过 [PR #111](https://github.com/foundation-model-stack/fastsafetensors/pull/111) 正式合入 fastsafetensors 上游，只需使用fastsafetensors的最新版本即可。
+
 ### 1.1 工作原理
 
 ```
@@ -107,20 +109,9 @@ git clone https://github.com/foundation-model-stack/fastsafetensors
 cd fastsafetensors
 ```
 
-### 3.3 应用 FGDS 补丁
+FGDS Copier 支持已通过 [PR #111](https://github.com/foundation-model-stack/fastsafetensors/pull/111) 正式合入 fastsafetensors 上游主线，源码中已包含 FGDS 相关代码，只需使用最新版本的 fastsafetensors 即可。
 
-FGDS 提供了一个补丁文件，为 fastsafetensors 添加 FGDS Copier 支持。补丁文件位于 FGDS 项目的 `python/` 目录下：
-
-```shell
-# 进入 fastsafetensors 项目根目录
-cd /path/to/fastsafetensors
-
-# 应用 FGDS 补丁（从 FGDS 项目 python 目录获取）
-git am /path/to/fgds/python/0001-Add-FGDS-an-alternative-solution-of-GDS-copier.patch
-```
-该补丁当前正在提交到 fastsafetensors 项目的 PR #101 中。
-
-该补丁会新增以下文件：
+上游中与 FGDS 相关的主要文件：
 
 | 文件                                 | 说明                      |
 | ---------------------------------- | ----------------------- |
@@ -128,7 +119,7 @@ git am /path/to/fgds/python/0001-Add-FGDS-an-alternative-solution-of-GDS-copier.
 | `fastsafetensors/cpp/fgds_ext.cpp` | C++ 扩展层，封装 libfgds 调用   |
 | `fastsafetensors/fgds_ext.pyi`     | C++ 扩展的 Python 类型存根文件     |
 
-同时会修改以下文件：
+此外还修改了以下文件：
 - `fastsafetensors/loader.py`: 添加 `use_fgds` 参数支持
 - `fastsafetensors/parallel_loader.py`: 透传 `use_fgds` 参数
 - `setup.py`: 添加 `fgds_ext` 编译目标
@@ -136,7 +127,7 @@ git am /path/to/fgds/python/0001-Add-FGDS-an-alternative-solution-of-GDS-copier.
 - `docs/configuration.md`: 添加 FGDS 配置说明
 - `tests/unit/`: 添加 FGDS 单元测试
 
-### 3.4 编译并安装 libfgds
+### 3.3 编译并安装 libfgds
 
 确保已按照 FGDS 文档编译安装 `libfgds.so`：
 
@@ -148,14 +139,14 @@ make -j$(nproc)
 # libfgds.so 将生成在 build/lib/ 目录下
 ```
 
-### 3.5 安装 FGDS Python 绑定
+### 3.4 安装 FGDS Python 绑定   
 
 ```shell
 cd /path/to/fgds/python
 pip install -e .
 ```
 
-### 3.6 编译 C++ 扩展并安装 fastsafetensors
+### 3.5 编译 C++ 扩展并安装 fastsafetensors
 
 ```shell
 cd /path/to/fastsafetensors
