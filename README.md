@@ -1,6 +1,6 @@
-# FGDS:Fast GPUDirect Storage
+# FGDS: Unified Fast GPUDirect Storage Toolkit
 
-FGDS is an optimized alternative to GDS, featuring higher performance, easier deployment, and better application compatibility. [GDS](https://docs.nvidia.com/gpudirect-storage/) (GPUDirect Storage) is a technology developed by NVIDIA that provides a direct data path between storage devices (like high-speed NVMe SSDs) and GPU memory.
+FGDS aims to deliver a high-performance, unified, and vendor-agnostic GPUDirect Storage (GDS) toolkit for AI workloads, featuring robust cross-kernel support and meticulous performance optimization.
 
 Cloned from [Phoenix](https://github.com/xPU-IO/Phoenix) at commit [`798208d`](https://github.com/xPU-IO/Phoenix/commits/798208d720b234954fef433b306a485093350e2a/), FGDS has undergone extensive optimizations and bug fixes, and is under active development. Welcome to use it and share your feedback—we will respond promptly, and contributions of any kind are welcome.
 
