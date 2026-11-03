@@ -2,12 +2,12 @@
 
 FGDS aims to deliver a high-performance, unified, and vendor-agnostic GPUDirect Storage (GDS) toolkit for AI workloads, featuring robust cross-kernel support and meticulous performance optimization.
 
-Cloned from [Phoenix](https://github.com/xPU-IO/Phoenix) at commit [`798208d`](https://github.com/xPU-IO/Phoenix/commits/798208d720b234954fef433b306a485093350e2a/), FGDS has undergone extensive optimizations and bug fixes, and is under active development. Welcome to use it and share your feedback—we will respond promptly, and contributions of any kind are welcome.
+Welcome to use it and share your feedback—we will respond promptly, and contributions of any kind are welcome.
 
 ## Highlights
 
 - **High Performance**
-    - Eliminating the overhead of phony buffers incurred by traditional GDS, thanks to Phoenix
+    - Eliminating the overhead of phony buffers incurred by traditional GDS
     - Based on io_uring, FGDS further significantly boosts disk read and write performance, with read performance improved by up to 115% and write performance by up to 40%
 - **Easier Deployment**
     - Eliminating the need to install the MLNX_OFED kernel driver suite
@@ -238,7 +238,6 @@ Before the disk bandwidth is saturated, the read/write performance comparison is
 - **2026-01-13** — Improved test programs and scripts
 - **2025-12-18** — Added the FGDS backend for LMCache, enabling vLLM to utilize FGDS for KV cache offloading
 - **2025-11-25** — Added FGDS Python API
-- **2025-11-06** — Cloned from [Phoenix](https://github.com/xPU-IO/Phoenix) at commit [`798208d`](https://github.com/xPU-IO/Phoenix/commits/798208d720b234954fef433b306a485093350e2a/)
 
 ## Copyright & LICENSE
 
