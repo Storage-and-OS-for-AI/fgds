@@ -1,113 +1,212 @@
 # pytorch-fgds
 
-This directory contains `fgds_torch.py`, an FGDS checkpoint example, and benchmark scripts for performance comparison.
+> **TL;DR:** This directory is the out-of-tree prototype of `torch.cuda.fgds`, a
+> GPUDirect Storage API for FGDS. It is a thin, Python-only wrapper around `libfgds.so`
+> that mirrors the `torch.cuda.gds` write/read path. The upstream change is one new Python
+> file (`torch/cuda/fgds.py`) plus one import line in `torch/cuda/__init__.py`, with no
+> C++/CMake changes. `libfgds.so` is loaded lazily via `ctypes`, so there is no build-time
+> dependency and official wheels work unchanged.
 
-## Integrating the FGDS API into PyTorch
+Proposed for PyTorch in [pytorch/pytorch#203560](https://github.com/pytorch/pytorch/issues/203560).
+`fgds_torch.py` is the module that would land as `torch/cuda/fgds.py`; this directory also
+contains a checkpoint read/write example and benchmark scripts.
 
-`torch.cuda.fgds` only requires a loadable `libfgds.so`. `fgds_torch.py` declares the
-required entry points with `ctypes` itself and loads the library lazily, so the
-separate `fgds` Python package (`fgds.fgds_bind`) does **not** need to be installed.
+## Proposed in-tree change
 
-1. Build and install `libfgds.so` as described in the repo top-level docs, and make sure the dynamic linker can find it (for example, install it into a system library path, or set `LD_LIBRARY_PATH`). `libfgds.so` also needs `liburing` at runtime.
-2. Verify that the library can be loaded:
+The in-tree change is additive:
+
+| File | Change |
+| --- | --- |
+| `torch/cuda/fgds.py` | new file: `fgds_torch.py` copied verbatim, no native code |
+| `torch/cuda/__init__.py` | add `fgds` to the existing `from . import _device_limits, gds` |
+| `docs/source/cuda.md` | a section mirroring "GPUDirect Storage (prototype)", plus a `.. py:module:: torch.cuda.fgds` entry |
+| `test/test_cuda.py` | tests mirroring `test_gds_*`, skipped when `fgds.is_available()` is `False` |
+
+No C++/CMake/CI changes, no new build or third-party Python dependencies, and `torch.save` /
+`torch.load` are untouched.
+
+## Prerequisites
+
+- Build `libfgds.so` as described in [`docs/getting-started.md`](../docs/getting-started.md).
+  The build produces `build/libfgds.so` and has no install target, so point the dynamic linker at
+  it (for example `LD_LIBRARY_PATH=$PWD/build`). `liburing` is also required at runtime. 
+- The `fgdsfs` kernel module is loaded, and the target filesystem supports `O_DIRECT` (not `tmpfs`).
+- NumPy is required by the checkpoint demo and `bench_posix_pytorch.py`; the FGDS/GDS benchmarks do not need it.
+
+Verify that the library can be loaded:
 
 ```bash
 python3 -c "import ctypes; ctypes.CDLL('libfgds.so'); print('libfgds.so loaded')"
 ```
 
-Then integrate this directory's `fgds_torch.py` into PyTorch:
+## Integrating the out-of-tree FGDS API into PyTorch
 
-1. Copy `fgds_torch.py` from this directory into the PyTorch source tree and **rename** it to `fgds.py`:
-     - `torch/cuda/fgds.py`
-2. Edit `torch/cuda/__init__.py` in the PyTorch source tree and add the import:
-     - `from . import fgds`
+`fgds_torch.py` is self-contained; the separate `fgds` Python package (`fgds.fgds_bind`)
+is not required.
 
-After that, you can use the FGDS API from Python via `from torch.cuda import fgds`.
-`fgds.is_available()` reports whether `libfgds.so` can be loaded and exports the
-expected symbols.
+1. Copy `fgds_torch.py` into the PyTorch source tree as `torch/cuda/fgds.py`.
+2. Add `from . import fgds` to `torch/cuda/__init__.py`.
 
-To use the module without modifying a PyTorch source tree, add this directory to
-`sys.path` and `import fgds_torch` directly (the checkpoint demo does this as a
-fallback).
+Then use it as `from torch.cuda import fgds`. 
 
-## Design of `fgds_torch.py`
+If the module is accepted upstream, this directory will not keep a second copy: `fgds_torch.py`
+becomes a thin re-export of `torch.cuda.fgds` (or is removed), so the example and benchmarks here
+run against the in-tree module and the two cannot drift.
 
-The Python API in `fgds_torch.py` follows the design of `torch/cuda/gds.py`:
+## Design of `torch.cuda.fgds`
 
-- `gds.py` exports `gds_register_buffer`, `gds_deregister_buffer`, and `GdsFile`
-- `fgds_torch.py` exports the corresponding `fgds_register_buffer`, `fgds_deregister_buffer`, and `FgdsFile`
-- `GdsFile` provides `load_storage` / `save_storage`
-- `FgdsFile` also provides `load_storage` / `save_storage`
+`fgds_torch.py` mirrors the `torch/cuda/gds.py` surface so the common write/read path looks
+the same; it binds `libfgds.so` at runtime instead of linking it at build time.
 
-The goal is to keep the usage of `torch.cuda.fgds` consistent with `torch.cuda.gds`, which makes migration and comparative testing easier.
+### API compatibility
 
-Main functions/methods in `fgds_torch.py`:
+| Capability | `torch.cuda.gds` | `torch.cuda.fgds` | Compatibility |
+| --- | --- | --- | --- |
+| Availability | `is_available()` | `is_available()` | same name, runtime probe |
+| Register buffer | `gds_register_buffer(s)` | `fgds_register_buffer(s)` | same signature; mandatory for I/O in FGDS, optional performance hint in GDS |
+| Deregister buffer | `gds_deregister_buffer(s)` | `fgds_deregister_buffer(s)` | same signature; must run before the last `FgdsFile` for the device closes |
+| File object | `GdsFile(filename, flags)` | `FgdsFile(filename, flags, device_id)` | same shape, extra `device_id` |
+| Read | `load_storage(storage, offset=0)` | `load_storage(storage, offset=0)` | same signature |
+| Write | `save_storage(storage, offset=0)` | `save_storage(storage, offset=0)` | same signature |
+| Storage type | CUDA `UntypedStorage` | CUDA `UntypedStorage` | same type |
 
-- `_build_bindings`
-    - Creates the `ctypes` bindings for `libfgds.so` (`fgds_open`, `fgds_close`, `fgds_read`, `fgds_write`, `fgds_regmem`, `fgds_deregmem`) and their argument/return types.
-    - Uses `RTLD_LAZY | RTLD_LOCAL` and does not run at import time, so importing the module succeeds even when `libfgds.so` (or its CUDA/`liburing` dependencies) is unavailable.
+The common save/load path has the same shape; the file object additionally takes
+`device_id`:
 
-- `_load_fgds_bind`
-    - Loads and caches the `ctypes` bindings on first use; on failure raises `RuntimeError` with the loader error, and the result is cached for the process lifetime.
+```python
+import os
 
-- `is_available`
-    - Returns whether `libfgds.so` is loadable and exports the expected entry points.
+import torch
+from torch.cuda import gds
 
-- `_fgds_file_constructed` / `_fgds_file_destroyed`
-    - Tracks `FgdsFile` instance counts per `device_id`.
-    - Calls `fgds_open(device_id)` when the first instance is created, and `fgds_close(device_id)` when the last instance is destroyed.
-    - When the last instance for a device is destroyed, releases any buffers still registered for that device before calling `fgds_close`.
+path = "/data/fgds_example.bin"
+src = torch.randn(16384, device="cuda:0")
+f = gds.GdsFile(path, os.O_CREAT | os.O_RDWR)
+gds.gds_register_buffer(src.untyped_storage())
+f.save_storage(src.untyped_storage(), 0)
+gds.gds_deregister_buffer(src.untyped_storage())
+del f  # GdsFile closes its fd and handle in __del__
 
-- `_fgds_shutdown`
-    - `atexit` fallback that closes sessions still open at interpreter shutdown while `libfgds.so` is still loaded.
+# FGDS: same shape, with device_id.
+from torch.cuda import fgds
 
-- `_fgds_file_session_active`
-    - Checks whether the given device already has an active FGDS session (used as a precondition check before registering/deregistering a buffer).
+f = fgds.FgdsFile(path, os.O_CREAT | os.O_RDWR, device_id=0)
+fgds.fgds_register_buffer(src.untyped_storage())
+f.save_storage(src.untyped_storage(), 0)
+fgds.fgds_deregister_buffer(src.untyped_storage())
+f.close()
+```
 
-- `_device_lock`
-    - Provides a per-device reentrant lock so session teardown cannot race I/O or buffer registration on the same device; operations on different devices are independent.
+### Intentional differences from `torch.cuda.gds`
 
-- `_cuda_device_index`
-    - Resolves the CUDA device index from a `Storage` and verifies that the storage is on CUDA.
+| Aspect | `torch.cuda.gds` | `torch.cuda.fgds` |
+| --- | --- | --- |
+| Binding | C++/pybind11 extension, `USE_CUFILE`, links `cuFile` (`libcufile`) | pure Python `ctypes`, lazy `dlopen` |
+| Build dependency | build-time flag | none; official wheels work as-is |
+| `is_available()` | compile-time constant | runtime probe, cached per process |
+| Device selection | implicit (no explicit device argument) | explicit `device_id`; no `torch.cuda.set_device` needed |
+| Buffer registration | `cuFile` buffer registration | `fgds_regmem` after an `FgdsFile` exists |
+| File offset | `O_DIRECT`-aligned | same, validated in Python (4 KiB) |
+| Session | file-handle-based (`register_handle` / `deregister_handle`) | per-device `fgds_open` / `fgds_close`, reference-counted |
+| Lifetime API | `__del__` only | context manager and explicit `close()`; `__del__` and `atexit` as fallbacks |
 
-- `fgds_register_buffer`
-    - Calls `fgds_regmem` to register GPU storage (requires an `FgdsFile` to have been created on the same device first, and a 64 KiB-aligned storage whose length is a positive multiple of 64 KiB).
+These differences are why `torch.cuda.fgds` is a separate namespace rather than an extension
+of `torch.cuda.gds`: extending `torch.cuda.gds` would require backend-specific branches in
+the same API, because the two backends do not map one-to-one on session lifetime, buffer
+registration, and resource management. The API stays aligned so that the common path is easy
+to port and to compare in benchmarks.
 
-- `fgds_deregister_buffer`
-    - Calls `fgds_deregmem` to deregister GPU storage.
+### Where it sits
 
-- `FgdsFile.__init__`
-    - Opens the file (`os.O_DIRECT`), holds an FGDS session, and creates a `fgds_fileid_t` containing the fd and `device_id`.
+```text
+torch.cuda.fgds  (torch/cuda/fgds.py, Python only; out-of-tree: fgds_torch.py)
+  |
+  |  is_available / fgds_register_buffer / fgds_deregister_buffer / FgdsFile
+  v
+lazy ctypes.CDLL("libfgds.so")  (no load at import time)
+  |
+  v
+libfgds.so
+  |  fgds_open / fgds_close / fgds_read / fgds_write /
+  |  fgds_regmem / fgds_deregmem
+  |
+  +--> /dev/fgds_devN  <-->  fgdsfs kernel module  <-->  NVMe
+  |
+  +--> GPU memory (registered through fgds_regmem)
+```
 
-- `FgdsFile.close` / `FgdsFile.__del__`
-    - `close` releases the file fd and this instance's session reference (idempotent); `__del__` is a non-raising fallback.
+`/dev/fgds_devN` is the FGDS device node for `device_id=N`.
 
-- `FgdsFile.load_storage`
-    - Calls `fgds_read` to read file contents into CUDA storage.
+For comparison, `torch.cuda.gds` is Python (`torch/cuda/gds.py`) plus a C++/pybind11
+extension (`torch/csrc/cuda/GdsFile.cpp`) compiled with `USE_CUFILE` and linked against
+`cuFile` (`libcufile`). The FGDS wrapper provides the same surface in pure Python and loads
+`libfgds.so` lazily with `ctypes`, so `import torch` never depends on `libfgds` being
+installed.
 
-- `FgdsFile.save_storage`
-    - Calls `fgds_write` to write CUDA storage contents to the file.
+### Lifecycle / call flow
 
-Sessions are per device: multiple `FgdsFile` objects for the same `device_id` share one
-`fgds_open`/`fgds_close` session, while objects for different devices coexist
-independently, so one process can drive several GPUs.
+```text
+FgdsFile(path, flags, device_id)
+  +-- validate device_id
+  +-- os.open(path, flags | O_DIRECT)
+  +-- first FgdsFile for device: fgds_open(device_id)
+  +-- build fgds_fileid_t(fd, device_id)
 
-## Checkpoint Read/Write Demo
+fgds_register_buffer(storage)
+  +-- require active FgdsFile for the storage's device
+  +-- fgds_regmem(device_id, ptr, nbytes, &host); track (ptr, nbytes)
 
-`example/checkpoint_demo.py` is a minimal end-to-end example that:
+save_storage(storage, offset) / load_storage(storage, offset)
+  +-- storage.device must match file.device_id
+  +-- offset must be a non-negative multiple of 4 KiB
+  +-- storage must be registered with the exact (ptr, nbytes)
+  +-- fgds_write/read(fid, ptr, 0, nbytes, file_offset)
+      under the per-device lock
 
-1. builds a synthetic `state_dict`;
-2. serializes it with `torch.save` into standard PyTorch checkpoint bytes;
-3. writes those bytes to disk with `FgdsFile.save_storage`;
-4. reads them back with `FgdsFile.load_storage`;
-5. validates the result byte-for-byte, with sha256, and with native `torch.load`.
+close()
+  +-- os.close(fd)
+  +-- last FgdsFile for device:
+      +-- fgds_deregmem(...) for all still-registered buffers
+      +-- fgds_close(device_id)
+```
 
-Requirements:
+### Runtime model
 
-- Linux with a loadable `libfgds.so` and the `fgdsfs` kernel module;
-- a filesystem that supports `O_DIRECT` (not tmpfs);
-- Python >= 3.8 (`fgds_torch.py` uses `from __future__ import annotations`);
-- numpy (used when copying read-back bytes from GPU to host).
+- **Lazy loading.** The library is loaded on first use, not at import; the result of the
+  first probe is cached, and `is_available()` returns `False` if loading fails.
+- **Per-device sessions.** The first `FgdsFile` for a `device_id` calls `fgds_open`, the
+  last one calls `fgds_close`; an `atexit` handler closes sessions still open at shutdown.
+  Buffers still registered when the session closes are deregistered first, because
+  `fgds_close` does not release those kernel mappings itself.
+- **Multi-GPU.** `device_id` fully determines the target device; different devices have
+  independent sessions, registrations, and I/O, so one process can drive several GPUs.
+- **Threading.** A per-device lock serializes transfers on a given device; operations on
+  different devices are independent and may run in parallel.
+- **SONAME.** `libfgds.so` is loaded by name and its required symbols are checked at
+  load time. SONAME/ABI versioning and a minimum supported version remain to be
+  defined (tracked as a TODO in `fgds_torch.py`).
+
+### Public interface
+
+```python
+__all__ = [
+    "is_available",
+    "fgds_register_buffer",
+    "fgds_deregister_buffer",
+    "FgdsFile",
+]
+```
+
+## Checkpoint read/write demo
+
+`example/checkpoint_demo.py` builds a synthetic `state_dict`, serializes it with `torch.save`,
+writes the bytes to disk with `FgdsFile.save_storage`, and reads them back with
+`FgdsFile.load_storage`. It then checks the result byte-for-byte, loads it with native
+`torch.load`, and prints SHA-256 digests.
+
+The demo is a transport test: it shows that FGDS can move a serialized checkpoint payload,
+but does not integrate FGDS with `torch.save`, `torch.load`, or
+`torch.distributed.checkpoint`.
 
 Run from the repository root:
 
@@ -120,58 +219,64 @@ python3 pytorch-fgds/example/checkpoint_demo.py \
     --chunk-mb 64
 ```
 
-The demo uses `torch.save` bytes and therefore serializes on the CPU side. It
-proves that the FGDS API can read and write a real PyTorch checkpoint, but it is
-not the pure GPU-direct performance path. For direct GPU tensor storage I/O, see
-`benchmark/bench_fgds_pytorch.py`.
+This demo uses `torch.save` bytes and therefore serializes on the CPU side: it validates
+correctness, not the pure GPU-direct performance path (see the benchmarks below). Pass
+`--chunk-mb 1` to exercise the multi-chunk and tail-read path.
 
-For the multi-chunk and tail-read path, run the demo again with
-`--chunk-mb 1`.
+## Benchmarks
 
-## Benchmark Directory
+The `benchmark/` directory compares different I/O paths (default test file size: 10 GiB):
 
-The `benchmark/` directory compares performance across different I/O paths (default test file size: 10GB):
+| Script | I/O path | Notes |
+| --- | --- | --- |
+| `bench_fgds_pytorch.py` | `torch.cuda.fgds` | one write + one read per round |
+| `bench_gds_pytorch.py` | `torch.cuda.gds` (`cuFile`) | one write + one read per round |
+| `bench_posix_pytorch.py` | `torch.save` / `torch.load` (buffered) and POSIX `writev` / `readv` with `O_DIRECT` | two paths |
 
-- `bench_fgds_pytorch.py`
-    - Benchmarks file write/read performance of `torch.cuda.fgds`.
-    - Each round runs one write + one read, and prints per-round and average latency/bandwidth.
+All three scripts verify round-trip correctness; `bench_posix_pytorch.py` checks both of its
+paths.
 
-- `bench_gds_pytorch.py`
-    - Benchmarks write/read performance of `torch.cuda.gds` (cuFile path).
-    - Each round runs one write + one read, and prints per-round and average latency/bandwidth.
-
-- `bench_posix_pytorch.py`
-    - Benchmarks two ordinary file paths:
-      - `torch.save` / `torch.load` (page-cache path)
-      - `direct-io` (`O_DIRECT` raw I/O path)
-    - Prints per-round and average latency/bandwidth, and performs read-back consistency checks.
-
-- `common.py`
-    - Shared configuration and helpers (for example test file path, test size, argument parsing, and chunked consistency checks).
-
-- `run_all_io_tests.sh`
-    - Runs the above benchmark scripts sequentially, with a `sleep 3` between scripts.
-
-## Usage
-
-Before running FGDS-related benchmarks, make sure `libfgds.so` is loadable and `fgds_torch.py` has been integrated into the PyTorch build in use (`torch.cuda.fgds` is importable). The `fgds` Python package is not required.
-
-Enter the benchmark directory first:
+Each script prints per-round and average latency/bandwidth. Run one or more benchmarks
+(arguments: `GPU_ID` and `NUM_ROUNDS`):
 
 ```bash
-cd benchmark
-```
-
-Run a single benchmark (arguments: `GPU_ID` `NUM_ROUNDS`):
-
-```bash
+cd pytorch-fgds/benchmark 
 python3 bench_fgds_pytorch.py 0 3
 python3 bench_gds_pytorch.py 0 3
 python3 bench_posix_pytorch.py 0 3
-```
 
-Run all benchmarks:
-
-```bash
+# or run all of them (with a 3-second sleep between scripts)
 ./run_all_io_tests.sh 0 3
 ```
+
+## Testing
+
+Two standalone entry points validate the proposed module against an installed
+`torch` (the installed tree needs both `torch/cuda/fgds.py` and the
+`from . import fgds` line). The unittest suite skips hardware-dependent cases when
+FGDS is unavailable; the e2e script requires an FGDS-enabled machine and exits
+non-zero when prerequisites are missing.
+
+| Entry point | Purpose |
+| --- | --- |
+| `tests/verify_fgds_e2e.py` | end-to-end self-check; prints `[PASS]`/`[FAIL]` per check and exits non-zero on failure |
+| `tests/verify_fgds_unittest.py` | a standalone variant of the `TestFGDS` suite that the in-tree change adds to `test/test_cuda.py` (requires `psutil`) |
+
+Together they cover round-trips across sizes, dtypes and offsets, persistence across
+reopen, session lifetime and multi-device use, error paths, and opt-in stress cases.
+Every round-trip case checks byte-exact content (`torch.equal` / `assertEqual`).
+
+Run them from the fgds repository root:
+
+```bash
+export LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export TMPDIR=/data/fgds_test                              # ext4/xfs, O_DIRECT-capable
+mkdir -p "$TMPDIR"
+
+python3 pytorch-fgds/tests/verify_fgds_unittest.py -v      # unittest suite
+python3 pytorch-fgds/tests/verify_fgds_e2e.py              # end-to-end self-check
+```
+
+`verify_fgds_e2e.py` reads `FGDS_TMPDIR` (falling back to `TMPDIR`); stress cases are
+opt-in via `FGDS_RUN_LARGE=1` (e2e, 1.5 GiB) and `FGDS_RUN_CONCURRENCY=1` (8 threads,
+both suites). The proposed in-tree suite can be run with `python test/test_cuda.py TestFGDS -v`.
